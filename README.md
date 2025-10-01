@@ -8,9 +8,11 @@ This repository contains the data and code to study 3 research questions in degu
 
 All analyses are performed in R and the code used is included in the 'code' folder. We numbered the Rmarkdowns to clarify which files to use first. 
 The data files are in the results folder. 
+## DOI
+https://doi.org/10.5281/zenodo.17243368 
 
 ## Licence
-
+CC BY 4.0
 ## R version
         
 R version 4.3.2 (2023-10-31 ucrt)
