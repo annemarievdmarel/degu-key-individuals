@@ -1,0 +1,702 @@
+---
+title: "2_Analysis_create matrices"
+author: "Annemarie van der Marel"
+date: "2024-09-06"
+output: html_document
+---
+
+
+# load libraries
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# data cleaning etc
+library(tidyverse)
+library(job) # to run models in the background
+library(igraph)
+```
+
+# import data
+
+```{r}
+scan_raw <- read.csv("../data/2023_scan_final.csv")
+behave_raw <- read.csv("../data/2023_interactions_final.csv")
+
+degus <- read.csv("../data/2023_adultdegus.csv") %>% 
+  filter(select==1)
+
+locations <- read.csv("data/El Roble burrow locations.csv") %>% 
+  janitor::clean_names() %>% 
+  group_by(burrow_or_other) %>% 
+  summarize(easting_x = round(mean(x_west_to_east, digits = 0)),
+            northing_y = mean(y_south_to_north))  %>%
+  filter(!is.na(easting_x)) %>%
+  rename(location=burrow_or_other)
+```
+
+# Helper functions & data
+
+## matrix function
+```{r echo=FALSE}
+
+#make matrix function (from dataframe, 1st col with row names)
+matrix.please<-function(x) {
+  m<-as.matrix(x[,-1])
+  rownames(m)<-x[,1]
+  m
+}
+
+
+```
+
+## list of degus
+```{r}
+# list of degus
+degulist <- degus %>%
+  #filter(select==1) %>%
+  dplyr::select(id)
+adultdegus <- sort(unique(degulist$id)) 
+
+id.sex <- degus %>%
+  dplyr::select(id,  sex) 
+```
+
+
+
+## dates
+select dates:
+2023-05-19 start observations, focused on interactions because of the seed experiment, still driving with Cecilia, so only half days
+2023-06-28 first whole day observations, own vehicle.
+2023-06-15 - 2023-07-14: fid test, start observations in the afternoon when i can drive
+2023-07-24 - 2023-07-28: no observations, went to Peru for VISA purposes
+2023-08-01 - 2023-08-23: I am alone in the field, no trapping so marks got hard to observe at the end
+2023-08-24 first day spring trapping (Marcelo & Juan)
+2023-09-20 first juveniles emerged; start pup trapping
+2023-09-26 - 2023-11-21: grass grew tall and little activity in the afternoons, so mainly morning observations
+
+fall telemetry from "2023-05-25" to "2023-06-28"
+spring telemetry from "2023_09_29" to "2023_10_30"
+
+
+so perhaps 2023-05-19 until 
+2023-08-23 (first day spring trapping, only 2 days of obs until 29th)/ 2023-08-29 (first juveniles born) instead of 2023-09-20 (first juveniles emerged)
+
+check number of observations for each behavior fall vs spring with different start dates 
+- no burrow sharing observations for spring, so only telemetry for 20 days of a subset of degus
+- interactions in spring probably many with juveniles
+
+Maybe I should change the start date in 2023 to 12 June (6 days difference between first females giving birth between '23 and '24, so add 6 days to June 6, as I’m pretty certain that that is last date of mating. 
+
+```{r}
+# or end date 2023-09-19/ "2023-08-24" / "2023-08-31"
+#as.Date(as.Date("2023-09-20"):as.Date("2023-11-21"), origin="2023-05-19")
+
+#fall <- seq(as.Date("2023-05-19"), as.Date("2023-08-28"), by="days") # from first day obs (almost start first female in oestrus to first female giving birth)
+fall <- seq(as.Date("2023-06-12"), as.Date("2023-08-28"), by="days") # from last day of oestrus to first female giving birth
+
+spring <- seq(as.Date("2023-08-29"), as.Date("2023-11-21"), by="days") # after first female gave birth to end of observations (offspring care)
+#spring <- seq(as.Date("2023-09-20"), as.Date("2023-11-21"), by="days") # first day juvenile emergence to end of observations                                                                                                                                 
+```
+
+
+
+
+# Get data ready
+```{r select dates fall}
+scan <- scan_raw %>% 
+  filter(date %in% fall)
+unique(scan$date)
+length(unique(scan$date))
+
+behave <- behave_raw %>% 
+   filter(date %in% fall)
+unique(behave$date)
+length(unique(behave$date)) # 30 days
+
+
+```
+
+hours observed
+
+```{r hours observed}
+# fall
+length(unique(scan$date)) 
+length(unique(scan$scanid)) 
+max(scan$scanid) 
+totalhoursobs <- length(unique(scan$scanid)) / 6 # each scan is 10 minutes, so 6 scans per hour
+avgtimedaily <- totalhoursobs/40 # 4.4 hours/daily
+
+
+```
+
+select degus seen on at least 5 days and at least 5 scans
+```{r select degus}
+scansummary <- scan %>%
+  group_by(actor) %>%
+  summarize(nscans_act=n_distinct(scanid), 
+            ndays_act=n_distinct(julian_date)) %>% 
+  rename(id=actor)
+  
+
+scansummary_subject <- scan %>%
+  group_by(subject) %>%
+  summarize(nscans_sub=n_distinct(scanid), 
+            ndays_sub=n_distinct(julian_date))%>% 
+  rename(id=subject)
+  
+
+scansummtotal <- scansummary %>% 
+  left_join(scansummary_subject) %>% 
+  replace(is.na(.), 0) %>% 
+  mutate(nscans=nscans_act+nscans_sub,
+         ndays=ndays_act +ndays_sub)
+
+
+remove.ids <- scansummtotal %>%
+  #filter(nscans<6) %>% # this would keep oc, of which we know exactly when it died but more important for the change in group dynamics
+  filter(ndays<6) %>% 
+  dplyr::select(id)
+
+remove.ids <- remove.ids$id
+exclude_ids <- c("7004", "7184") # found death in 2023 but still some observations afterwards..., so exclude
+
+scan_analyses <- scan %>%
+  filter(!actor %in% remove.ids, 
+         !subject %in% remove.ids, 
+         !actor %in% exclude_ids, 
+         !subject %in% exclude_ids,
+         actor %in% adultdegus) # keep only observations where the actor is in the list of bird IDs 
+         #actor %in% trappeddegus, # only keep individuals with at least a measure of body condition, meaning that they were trapped
+         #subject %in% trappeddegus) 
+         #subject %in% degu.list)
+
+length(unique(scan_analyses$actor))
+
+```
+
+
+ observation bias
+```{r observation bias}
+hours.obs <- scan_analyses %>%                 
+  group_by(actor) %>%
+  summarise(scans=n_distinct(scanid), hours.obs=scans/6) 
+
+```
+
+ dyad list with observed degus
+```{r dyad list}
+# list of all possible dyads
+# selectdegus <- filter(degulist,
+#                       !id %in% remove.ids,
+#                       !id %in% exclude_ids,
+#                       id %in% adultdegus)
+#                       #id %in% trappeddegus)
+
+selectdegus <- scansummtotal %>%
+  filter(ndays>5, id %in% adultdegus) %>% 
+  dplyr::select(id)
+id<-selectdegus$id
+
+dyad.list <- expand.grid(selectdegus$id, selectdegus$id) #head(dyad.list)
+names(dyad.list) <- c("actor", "subject")
+dyad.list <- subset(dyad.list, actor!=subject)
+#dyad.list$dyadID <- paste(dyad.list$actor, dyad.list$subject, sep="-")
+
+dyad.list$actor <- as.factor(dyad.list$actor)
+dyad.list$subject <- as.factor(dyad.list$subject)
+```
+
+
+ behave ids
+```{r}
+
+
+behavesummary <- behave %>%
+  group_by(actor) %>%
+  summarize( 
+            ndays=n_distinct(julian_date))
+
+behave_analyses <- behave %>%
+   filter(actor %in% id, 
+          subject %in% id)
+# 
+# behave_analyses <- behave %>%
+#   filter(!actor %in% remove.ids, 
+#          !subject %in% remove.ids, 
+#          !actor %in% exclude_ids, 
+#          !subject %in% exclude_ids,
+#          actor %in% adultdegus, # keep only observations where the actor is in the list of bird IDs 
+#          subject %in% adultdegus,
+#          actor %in% trappeddegus, # only keep individuals with at least a measure of body condition, meaning that they were trapped
+#          subject %in% trappeddegus)
+
+length(unique(levels(as.factor(behave_analyses$actor))))
+unique(behave_analyses$subject)
+```
+
+# Proximity
+
+
+## from locations during scans
+Throughout the day, patterns of group formation and sexual segregation might differ from those present at night (Radespiel et al. 2001). We therefore also calculated the mean percentage of adult males and females in a 3-m radius within a 10-min scan using all our scan samples.
+
+
+
+```{r fall locations}
+
+range(scan_analyses$date)
+
+# tz = trap zone = 33 10 w
+check.tz <- scan_analyses %>% 
+  filter(location=="tz")
+
+scan_analyses$direction[scan_analyses$location=="tz"] <- "w"
+scan_analyses$meter[scan_analyses$location=="tz"] <- 10
+scan_analyses$location[scan_analyses$location=="tz"] <- 33
+
+scan_locs <- scan_analyses %>% 
+  left_join(locations, by = "location")
+
+```
+
+add meters and wind direction to easting and northing
+
+```{r meters to UTM easting and northing}
+
+# ifelse(condition, do_if_true, do_if_false)
+# ifelse(test, result1, ifelse(test2, result2, result3))
+
+h<-scan_locs %>%
+  rename(coordinates=meter)
+
+levels(as.factor(scan_locs$direction))
+
+### only east and north
+
+# h$newx <- ifelse(h$direction=="e", h$coordinates + h$easting_x,
+#                  ifelse(h$direction=="w", h$easting_x-h$coordinates, h$easting_x))
+# h$newy<- ifelse(h$direction=="N", h$coordinates + h$northing_y,
+#                 ifelse(h$direction=="S", h$northing_y-h$coordinates, h$northing_y))
+
+### all
+# if east add meters to easting (x)
+# if west substract meters from easting (x)
+# if north add meters to northing (y)
+# if south substract meters to northing (y)
+# if direction = NE, then add (coordinates*sin45)/sin90 to easting(x) &
+#                   add (coordinates*sin45)/sin90 to northing (y)
+# if direction = SE, then add (coordinates*sin45)/sin90 to easting(x) &
+#                   subtract (coordinates*sin45)/sin90 from northing (y)
+# if direction = SW, then subtract (coordinates*sin45)/sin90 from easting(x) &
+#                   subtract (coordinates*sin45)/sin90 from northing (y)
+# if direction = NW, then subtract (coordinates*sin45)/sin90 from easting(x) &
+#                   add (coordinates*sin45)/sin90 to northing (y)
+h$x<-ifelse(is.na(h$direction), h$easting_x,
+      ifelse(h$direction=="e", h$coordinates + h$easting_x,
+         ifelse(h$direction=="w", h$easting_x-h$coordinates,
+            ifelse(h$direction=="ne",h$easting_x + ((h$coordinates*sin(45))/sin(90)),
+               ifelse(h$direction=="se",h$easting_x + ((h$coordinates*sin(45))/sin(90)),
+                  ifelse(h$direction=="sw",h$easting_x - ((h$coordinates*sin(45))/sin(90)),
+                     ifelse(h$direction=="nw",h$easting_x - ((h$coordinates*sin(45))/sin(90)),h$easting_x)))))))
+
+h$y<-ifelse(is.na(h$direction), h$northing_y,
+      ifelse(h$direction=="n", h$coordinates + h$northing_y,
+        ifelse(h$direction=="s", h$northing_y-h$coordinates,
+           ifelse(h$direction=="ne",h$northing_y + ((h$coordinates*sin(45))/sin(90)),
+            ifelse(h$direction=="se",h$northing_y - ((h$coordinates*sin(45))/sin(90)),
+               ifelse(h$direction=="sw",h$northing_y - ((h$coordinates*sin(45))/sin(90)),
+                ifelse(h$direction=="nw",h$northing_y + ((h$coordinates*sin(45))/sin(90)),h$northing_y)))))))
+
+
+glimpse(h)
+#View(h)
+
+scan_prox <- h %>% 
+  select(-easting_x, -northing_y)
+
+
+
+```
+
+
+
+Using spatsoc, I have to exclude multiple instances of the same degu per scan
+
+```{r}
+prox_degus <- scan_prox %>% 
+  select(orderkey, scanid, actor) %>% 
+  group_by(scanid,  actor) %>% 
+  tally() # should be 12087 rows
+
+scan_1xdegus <- scan_prox %>% 
+  #select(orderkey, scanid, actor) %>% 
+  group_by(scanid,  actor) %>% 
+  slice(1) %>% 
+  arrange(orderkey) #12087 rows
+
+#write.csv(scan_1xdegus, "results/scan_cleanedlocs_1degusperscan_fall23.csv")
+```
+
+
+Now per scan, we want to measure who is within 3 m of one another
+
+a(x1,y1) 
+b(x2,y2)
+what is the distance between the 2 points? 
+
+d = sqrt((x2-x1)^2 +(y2-y1)^2
+
+```{r}
+#library("sf)
+
+#raster::pointDistance()
+# distance <- scan_prox %>%
+#   filter(scanid==1) %>% 
+#   summarize(distance=  raster::pointDistance(cbind(x, y),
+#                                cbind(lag(x), lag(y)),
+#                                lonlat = FALSE,
+#                                allpairs = FALSE))
+  
+#library("spatsoc")
+dist = data.table::setDT(scan_1xdegus)
+
+distance <- spatsoc::group_pts(DT = dist, 
+                   threshold = 2, # as I have nearest neighbor <2, then why not here as well instead of 3, or here as 3, as the other behaviors are <2m
+                   id='actor',
+                   coords = c("x", "y"),
+                   timegroup = 'scanid')
+
+# only keep instances where more than 1 degus was observed
+distance_select <- distance %>% 
+  group_by(group) %>% 
+  tally() %>% 
+  filter(n>1) # 7 degus within 3 m is the largest 'group'
+
+prox_groups <- distance   %>% 
+  filter(group %in% distance_select$group) %>% # long format
+  rename(meter=coordinates)
+
+
+# change to wide format: 
+prox_groups_wide <- prox_groups %>% 
+  filter(actor %in% adultdegus) %>% 
+  group_by(group) %>%
+  #mutate(dyad= combn(actor, 2, simplify=FALSE))
+  mutate(group_members = paste(actor,collapse = "_")) %>%    
+  dplyr::select(scanid, julian_date, group, group_members) %>% 
+  group_by(group) %>% slice(1) %>%
+  separate(group_members,into = c("id1","id2","id3","id4","id5"),sep = "_") 
+
+
+#https://www.ethan-young.com/code/restructuring-dyadic-data/
+# prox_dyads <- prox_select %>%    
+#   dplyr::select(scanid, actor, sex_actor, julian_date, group) %>% # To be explained soon ;)
+#   arrange(group) %>%  
+#   group_by(group) %>% # 
+#   gather(key,value,-scanid, -group,-julian_date, -sex_actor) %>%     #
+#   #mutate(sex = ifelse(gender == 1,"h","w")) %>% #
+#   unite(new_key,key,sex_actor,sep = "_",remove=T) %>% #
+#   spread(new_key,value)   
+
+# prox_dyads <- prox_select %>% 
+#   dplyr::select(scanid, actor, sex_actor, julian_date, date, x, y, group) %>% 
+#   group_by(group) %>% 
+#   expand(actor, actor) # duplicate dyads (here it is unidirectional, so dyads should only occur once, no matter who the actor is)
+#https://stackoverflow.com/questions/76373646/how-to-create-unique-list-of-dyads-from-lists-within-purrr
+  
+```
+
+2713 observations of individuals within 3m of one another, calculated by locations
+917 observations of individuals within 2m of one another, calculated by locations
+
+
+
+https://stackoverflow.com/questions/69171494/how-to-create-an-edgelist-from-a-dataframe-expand-group-by
+```{r observed proximity network}
+# go from ids/group to dyads/group # maybe davidakenny.net/RDDD.htm
+# dyad<-if(groups$groupID==groups$groupID+1,unite(dyads,ids, sep = "_"),NA )
+# dyad<-group_by(groups, groupID) %>%   transmute(dyads=unite(ids, sep = "_"))
+
+# prox_locXdyad <- do.call("rbind", lapply(split(prox_groups, prox_groups$group), function(d) {
+#    if (nrow(d) > 1) unique(do.call("rbind", combn(d$actor, 2, simplify = FALSE)))
+# }))
+
+prox_list <- do.call(
+  rbind,
+  lapply(
+    with(prox_groups, split(actor, group)),
+    function(v) {
+      make_full_graph(length(v)) %>%
+        set_vertex_attr(name = "name", value = v) %>%
+        get.data.frame()
+    }
+  )
+)
+
+
+prox_locXdyad <- prox_list %>% 
+  rename(id1=from, 
+         id2=to) %>% 
+  group_by(id1, id2) %>% 
+  tally()
+
+
+
+
+```
+790 dyads observed within 3m from one another in fall
+581 dyads observed within 2m from one another in fall
+
+## from behaviors
+Only proximity behaviors
+```{r fall}
+prox_behaviors <- levels(as.factor(behave_analyses$behavior[behave_analyses$behaviortypesid==1]))
+prox_behaviors <- c("close contact 2m", "forage in group", "touch")
+
+prox <-  behave_analyses %>%
+  filter(behavior %in% prox_behaviors, #behaviortypesid==1, 
+         actor!=subject) # 1994 observations of proximity behaviors, seems to all be part of the scans as well
+```
+
+Now check whether we have duplicates from the location datafame
+
+```{r}
+
+prox_duplicates <- prox %>% 
+  select(-orderkey) %>% 
+  semi_join(select(prox_groups, -orderkey), 
+            by=c("actor", "sex_actor","behavior", "subject", "sex_subject", 
+                 "location", "meter", "direction", "date", "julian_date", 
+                  "year", "month", "day", "time", "duration"))  # 337 duplicates/17 dyuplicates
+
+# remove these from the behavior dataframe
+
+prox_behave <- prox %>% 
+  anti_join(prox_duplicates)
+
+head(prox_behave)
+
+# check
+length(prox$orderkey)-length(prox_behave$orderkey)==length(prox_duplicates$session_key)
+```
+
+Summarize so that we can join the 2 dataframes as now we have the interaction and the scan dataset. 
+
+```{r fall}
+prox_behaveXdyad <- behave_analyses %>%
+  filter(behaviortypesid==1, 
+         actor!=subject) %>%
+  group_by(actor, subject) %>%
+  tally() %>% 
+  rename(id1=actor,
+         id2=subject)
+```
+676 dyads observed from interactions
+
+
+## combine
+
+combine proximity interaction and scan location dataframes
+```{r}
+
+prox_combine <- full_join(prox_behaveXdyad, prox_locXdyad, 
+                          by=c("id1", "id2"))
+
+prox_combine[is.na(prox_combine)]<-0
+
+proxXdyad <- prox_combine %>% 
+  mutate(n=n.x+n.y) %>% 
+  rename(n_behave=n.x, 
+         n_scan=n.y) %>% 
+  select(id1, id2, n, everything())
+
+total.prox<- sum(proxXdyad $n)
+
+proxXdyad $id1 <- as.factor(proxXdyad$id1)
+proxXdyad $id2 <- as.factor(proxXdyad$id2)
+n_distinct(proxXdyad$id1)
+
+# control for observation bias
+# fall
+hours.obs.id <- hours.obs %>%
+  rename(id1=actor)
+
+prxXdyad.c <- proxXdyad %>% 
+  left_join(hours.obs.id, by="id1") %>% 
+  select( -scans) %>% 
+  rename(actor.obs=hours.obs)
+hours.obs.s<-select(hours.obs.id, -scans) %>% 
+  rename(id2=id1,
+    subject.obs=hours.obs)
+
+proxXdyad.control <-prxXdyad.c  %>% 
+  left_join(hours.obs.s, by="id2") %>% 
+  mutate(ave.obs=(actor.obs+subject.obs)/2, 
+         frequency=n/ave.obs) 
+
+
+
+# include all degus
+ n_distinct(dyad.list$actor)
+  n_distinct(dyad.list$subject)
+
+  dyad.prox.list <- dyad.list %>% 
+  rename(id1=actor, 
+         id2=subject)
+dyad.prox.list$id1 <- as.factor(dyad.prox.list$id1)
+dyad.prox.list$id2 <- as.factor(dyad.prox.list$id2)
+
+prox_alldyads <- full_join(dyad.prox.list , proxXdyad.control ) 
+
+  #head(data_alldyads)
+  #length(unique(data_alldyads$dyadID)) # with 95 degus should be 8930 dyads
+  
+ #fill newly-merged data with 0's where no interactions
+ prox_alldyads[is.na(prox_alldyads)] <- 0
+ 
+ n_distinct(prox_alldyads$id1)
+  n_distinct(prox_alldyads$id2)
+  
+   #print a check
+  check <- length(prox_alldyads$id1)
+```
+NB! If I want to select a certain time period, I'll have to rerun the analyses and make my selection at the start.
+
+## save file
+```{r}
+
+write.csv(prox_alldyads, "results/proximity_alldyads_fall23_12jun-28aug.csv") 
+write.csv(proxXdyad.control, "results/proximityXdyads_fall23_12jun-28aug.csv") 
+
+```
+
+
+
+# Affiliative interactions
+
+
+```{r affiliative network}
+
+cat_check <- behave_analyses %>%
+  filter(behaviortypesid==2)
+unique(cat_check$behavior)
+
+
+affXdyad <- behave_analyses %>%
+  filter(behaviortypesid==2, actor!=subject) %>% 
+  group_by(actor, subject) %>%
+  tally()
+affXdyad$actor <- as.factor(affXdyad$actor)
+affXdyad$subject <- as.factor(affXdyad$subject)
+total.aff <- sum(affXdyad$n)
+
+#check only allogroom -> very sparse
+groomXdyad <- behave_analyses %>%
+  filter(behavior=="allogroom", actor!=subject) %>% 
+  group_by(actor, subject) %>%
+  tally()
+total.groom <- sum(groomXdyad$n)
+
+
+# control for observation bias
+affXdyad.c <- affXdyad %>% 
+  left_join(hours.obs, by="actor") %>% 
+  select( -scans) %>% 
+  rename(actor.obs=hours.obs)
+hours.obs.s<-select(hours.obs, -scans) %>% 
+  rename(subject=actor,
+    subject.obs=hours.obs)
+
+affXdyad.control <-affXdyad.c  %>% 
+  left_join(hours.obs.s, by="subject") %>% 
+  mutate(ave.obs=(actor.obs+subject.obs)/2, 
+         frequency=n/ave.obs) 
+
+# include all ID's
+
+ aff_alldyads <- full_join(dyad.list, affXdyad.control) #dyad.list when all 113 degus
+
+ #fill newly-merged data with 0's where no interactions
+ aff_alldyads[is.na(aff_alldyads)] <- 0
+
+ 
+    #print a check
+  check <- length(aff_alldyads$actor)
+   sum(aff_alldyads$n) 
+
+aff_alldyads <- aff_alldyads %>%
+  rename(id1=actor, id2=subject)
+
+n_distinct(aff_alldyads$id1)
+  n_distinct(aff_alldyads$id2)
+
+
+  
+# save file
+write.csv(aff_alldyads, "results/affiliative_alldyads_fall23_12jun-28aug.csv")
+write.csv(affXdyad.control, "results/affiliativeXdyads_fall23_12jun-28aug.csv")
+  
+```
+
+# Agonistic interactions
+```{r agonistic network + dominance}
+
+cat_check <- behave_analyses %>%
+  filter(behaviortypesid==3)
+ago.behaviors <- unique(cat_check$behavior)
+ago.behaviors
+
+aggXdyad <- behave_analyses %>%
+  filter(behaviortypesid==3, #behavior %in% ago.behaviors, #, 
+         actor!=subject) %>% 
+  group_by(actor, subject) %>%
+  tally()
+
+total.agg <- sum(aggXdyad$n)
+
+
+# control for observation bias
+aggXdyad.c <- aggXdyad %>% 
+  left_join(hours.obs, by="actor") %>% 
+  select( -scans) %>% 
+  rename(actor.obs=hours.obs)
+hours.obs.s<-select(hours.obs, -scans) %>% 
+  rename(subject=actor,
+    subject.obs=hours.obs)
+
+aggXdyad.control <-aggXdyad.c  %>% 
+  left_join(hours.obs.s, by="subject") %>% 
+  mutate(ave.obs=(actor.obs+subject.obs)/2, 
+         frequency=n/ave.obs) 
+
+
+
+head(aggXdyad)
+
+ ag_alldyads <- full_join(dyad.list, aggXdyad.control) # dyad list for all 113 degus
+ #merge(dyad.list, agg, all.x=TRUE, by=c("actor", "subject")) 
+  
+  #head(data_alldyads)
+  #length(unique(data_alldyads$dyadID)) # with 95 degus should be 8930 dyads
+  
+ #fill newly-merged data with 0's where no interactions
+ ag_alldyads[is.na(ag_alldyads)] <- 0
+  
+   #print a check
+  check <- length(ag_alldyads$actor)
+sum(ag_alldyads$n)
+
+ag_alldyads <- ag_alldyads %>%
+  rename(id1=actor, id2=subject)
+
+n_distinct(ag_alldyads$id1)
+  n_distinct(ag_alldyads$id2)
+
+# save file
+write.csv(aggXdyad.control, "results/agonisticXdyad_fall23_12jun-28aug.csv")  
+write.csv(ag_alldyads, "results/agonistic_alldyads_fall23_12jun-28aug.csv")    
+  
+```
+
+
+

@@ -1,0 +1,830 @@
+---
+title: "3_Analysis_Identify key individuals"
+author: "Annemarie van der Marel"
+date: "2024-09-06"
+output: html_document
+---
+# load libraries
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# data cleaning etc
+library(tidyverse)
+library(job) # to run models in the background
+
+# 
+library(betareg)
+
+# networks and metrics
+library(igraph) 
+library(assocInd)
+library(einet) # effectiveness
+library(domstruc) #remotes::install_github("danm0nster/domstruc")
+#renv::init(repos = "https://packagemanager.posit.co/cran/2023-10-13")
+#install.packages("maptools")
+#install.packages("maptools", repos = "https://packagemanager.posit.co/cran/2023-10-13")
+
+# multilayer network and metrics
+library(muxViz) #devtools::install_github("manlius/muxViz")
+
+# plots
+library(ggraph)
+library(ggtext)
+library(RColorBrewer)
+library(glue)
+requireNamespace("graphics", quietly = TRUE)
+requireNamespace("grid", quietly = TRUE)
+requireNamespace("rgl", quietly = TRUE)
+```
+
+
+
+
+
+# Import data
+
+```{r}
+load("../results/key_degus_fall2024.RData")
+```
+
+
+```{r}
+degus <- read.csv("../data/2024/degusID24.csv") %>%  # marked degus (juveniles excluded) 
+  filter(key!=0)
+
+
+# proximity
+#proxXdyad_fall <- read.csv( "results/proximityXdyad_fall24.csv")
+prox_alldyads_fall <- read.csv( "../results/proximity_alldyads_fall24.csv") 
+n_distinct(prox_alldyads_fall$id1)
+n_distinct(prox_alldyads_fall$id2)
+
+# affiliative
+#affXdyad_fall <- read.csv( "results/affiliativeXdyad_fall24.csv")
+aff_alldyads_fall<-read.csv( "../results/affiliative_alldyads_fall24.csv")
+n_distinct(aff_alldyads_fall$id1)
+n_distinct(aff_alldyads_fall$id2)
+
+
+# agonistic
+#aggXdyad_fall <- read.csv( "results/agonisticXdyad_fall24.csv")
+ag_alldyads_fall <- read.csv("../results/agonistic_alldyads_fall24.csv")
+n_distinct(ag_alldyads_fall$id1)
+n_distinct(ag_alldyads_fall$id2)
+
+```
+
+# Monolayer networks 
+
+### remove non-interacting degus
+exclude degus without any interaction across all 4 layers
+```{r}
+prox_alldyads_fall$id1 <- as.integer(prox_alldyads_fall$id1)
+prox_alldyads_fall$id2 <- as.integer(prox_alldyads_fall$id2)
+
+nonint_dyads <- aff_alldyads_fall %>%
+  rename(n.aff=n) %>%
+  left_join(ag_alldyads_fall %>% rename(n.agg=n), by=c("id1", "id2")) %>%
+  #left_join(ass_alldyads %>% rename(n.ass=n), by=c("id1", "id2") ) %>% 
+  left_join(prox_alldyads_fall %>% rename(n.prx=n), by=c("id1", "id2") ) %>% 
+  filter(n.aff==0 & n.agg == 0 &  n.prx == 0) 
+
+
+int_dyads <- aff_alldyads_fall %>%
+  rename(n.aff=n) %>%
+  left_join(ag_alldyads_fall %>% rename(n.agg=n), by=c("id1", "id2")) %>%
+  #left_join(ass_alldyads %>% rename(n.ass=n), by=c("id1", "id2") ) %>% 
+  left_join(prox_alldyads_fall %>% rename(n.prx=n), by=c("id1", "id2") ) %>% 
+  mutate(no.int =if_else(n.aff==0&n.agg==0&n.prx==0, "yes", "no")) %>%
+  filter(no.int=="no") %>%
+  #filter(n.aff!=0 & n.agg != 0 & n.ass != 0 & n.prx!= 0) %>% # this keeps only dyads with interactions in all 4 layers
+  dplyr::select(id1, id2)
+
+length(int_dyads$id1) == length(prox_alldyads_fall$X)- length(nonint_dyads$X.x) #11772-10622 = 1150
+  
+actors <- int_dyads %>%
+  distinct(id1) %>% 
+  arrange(id1) # %>% rename(id=id1)
+#actors <- actors$id1
+length(actors$id1) # 106 unique individuals with at least interactions in one layer
+
+subjects <- int_dyads %>%
+  distinct(id2) %>% arrange(id2) # rename(id=id2)
+length(subjects$id2) # 108
+
+# check actors and subjects
+nonMatch_actors <- actors %>% 
+      filter(!actors$id1 %in% subjects$id2) #For df1 values not in df2
+nonMatch_subjects <- subjects %>% 
+      filter(!subjects$id2 %in% actors$id1) #For df2 values not in df1
+
+
+int.ids <- actors$id1
+
+#missing.subjects <- c(7076)
+missing.actor <- c(7399, 7474, 7486)
+
+int_dyads2 <- cross_join(subjects, subjects) %>% 
+  rename(id1=id2.x, id2=id2.y) %>% 
+  filter(id1!=id2) %>% 
+  unite(dyad, c("id1", "id2"), sep="_", remove=F)
+# int_dyads <- expand.grid(int.ids, int.ids) #head(dyad.list)  10404
+# names(int_dyads) <- c("actor", "subject")
+# int_dyads  <- subset(int_dyads , actor!=subject)
+  
+length(unique(int_dyads2$id1))
+length(unique(int_dyads2$id2))
+
+int.ids <- unique(int_dyads2$id1)
+```
+
+### proximity
+
+```{r}
+ # proximity
+# prox_intdyads <- prox_alldyads  %>% 
+#   unite(dyad, c("id1", "id2"), sep="_", remove=F) %>% 
+#   semi_join(int_dyads, b="dyad")
+# length(unique(prox_intdyads$id1))
+
+prox_alldyads <- left_join(int_dyads2 , prox_alldyads_fall) # int_dyads not symmetrical (108 subjects vs 106 actors)
+
+check <- prox_alldyads_fall %>% 
+  filter(n!=0)
+
+# matrix
+  mx.prox <- reshape2::dcast(prox_alldyads, id1~id2, value.var="frequency") #n for counts vs frequency controlled for observation bias
+  mx.prox[is.na(mx.prox)] <- 0 #for linearity measure, matrix needs to be fully filled, no NAs
+  mx.prox <- matrix.please(mx.prox)
+
+# network
+  graph.prox <- graph_from_adjacency_matrix(mx.prox, "undirected", weighted=T, diag=F)
+  plot(graph.prox)
+  
+
+# network metrics
+   g <- graph.prox
+
+
+
+# individual metrics
+  degree <- igraph::degree(g, mode = c("out"))
+  
+  strength <- strength(g, mode = ("out"), weights = E(g)$weight)
+  
+  closeness <- igraph::closeness(g)
+  
+  between <- igraph::betweenness(g, 
+                                directed = FALSE,
+                                weights = E(g)$weight)
+  
+  eigenvector <- (igraph::eigen_centrality(g, directed = FALSE,
+                                      weights = E(g)$weight))
+  ec <- eigenvector$vector
+  ec.value <- eigenvector$value
+  
+  # page rank
+  pr.list <- igraph::page_rank(g, 
+                          directed = FALSE, 
+                          weights = E(g)$weight)
+  prv<- pr.list$vector
+  pr <- prv/max(prv)
+  
+  
+  metrics_prox_ind <-  cbind.data.frame(
+                           int.ids, #int.ids, #id
+                           degree,
+                           strength, 
+                           between, 
+                           closeness,
+                           ec,
+                           pr) %>% 
+    mutate(network="proximity")
+  
+  
+# network metrics
+  diameter = diameter(g)
+  
+  density = edge_density(g)
+  
+  avg_path_length = average.path.length(g) # mean_distance = mean_distance((g)), -> calculates the same
+  
+  #connectedness = vertex.connectivity(g)
+  
+  ei = einet::effective_information(g, effectiveness = FALSE)
+  efficiency <- ei/log2(length(int.ids)) #selectdegus$id
+
+  
+  #Find proportion unknown relationships, a measure of sparseness
+  prunk <- EloRating::prunk(mx.prox)
+  prunk.pu <- as.numeric(prunk[1])
+  prunk.dyads <- as.numeric(prunk[2]) 
+  
+metrics_prox_group <- cbind.data.frame(ec.value,
+                                       diameter, 
+                                       density,
+                                       avg_path_length, 
+                                       #connectedness, 
+                                       efficiency,ei, 
+                                       prunk.pu, prunk.dyads
+                                       ) %>% 
+  mutate(network="proximity")
+```
+
+### affiliative 
+```{r}
+# affiliative
+# aff_intdyads <- aff_alldyads  %>% 
+#   unite(dyad, c("id1", "id2"), sep="_", remove=F) %>% 
+#   semi_join(int_dyads, b="dyad")
+# length(unique(aff_intdyads$id1))
+
+aff_alldyads <- left_join(int_dyads2 , aff_alldyads_fall) 
+
+# matrix  (rows are actors, columns are subjects)
+  # mx.aff <- reshape2::dcast(aff_intdyads, id1~id2, value.var="n") #head(ref.behavior1.mx)
+  # mx.aff[is.na(mx.aff)] <- 0 #for linearity measure, matrix needs to be fully filled, no NAs
+  # mx.aff <- matrix.please(mx.aff)
+
+  ## controlled for observation bias
+   mx.aff <- reshape2::dcast(aff_alldyads, id1~id2, value.var="frequency") #head(ref.behavior1.mx)
+  mx.aff[is.na(mx.aff)] <- 0 #for linearity measure, matrix needs to be fully filled, no NAs
+  mx.aff <- matrix.please(mx.aff) 
+  
+  
+# network
+  graph.aff <- graph_from_adjacency_matrix(mx.aff, "directed", weighted=T, diag=F) 
+  plot(graph.aff)
+
+# network metrics
+   g <- graph.aff
+
+
+# individual metrics
+  degree <- igraph::degree(g, mode = c("out"))
+  
+  strength <- strength(g, mode = ("out"), weights = E(g)$weight)
+  
+  closeness <- igraph::closeness(g)
+  
+  between <- igraph::betweenness(g, 
+                                directed = TRUE,
+                                weights = E(g)$weight)
+  
+  eigenvector <- (igraph::eigen_centrality(g, directed = TRUE,
+                                      weights = E(g)$weight))
+  ec <- eigenvector$vector
+  ec.value <- eigenvector$value
+  
+  # page rank
+  pr.list <- igraph::page_rank(g, 
+                          directed = TRUE, 
+                          weights = E(g)$weight)
+  prv <- pr.list$vector
+  pr <- prv/max(prv)
+  
+  
+  metrics_aff_ind <-  cbind.data.frame(
+                           int.ids, #z2.degus, fall_degus_rc
+                           degree,
+                           strength, 
+                           between, 
+                           closeness,
+                           ec,
+                           pr) %>% 
+    mutate(network="affiliative")
+  
+  
+# network metrics
+  diameter = diameter(g)
+  
+  density = edge_density(g)
+  
+  avg_path_length = average.path.length(g) # mean_distance = mean_distance((g)), -> calculates the same
+  
+  #connectedness = vertex.connectivity(g)
+  
+  ei = einet::effective_information(g, effectiveness = FALSE)
+  efficiency <- ei/log2(length(int.ids)) #selectdegus$id
+
+  
+  #Find proportion unknown relationships, a measure of sparseness
+  prunk <- EloRating::prunk(mx.aff)
+  prunk.pu <- as.numeric(prunk[1])
+  prunk.dyads <- as.numeric(prunk[2]) 
+  
+metrics_aff_group <- cbind.data.frame(ec.value,
+                                       diameter, 
+                                       density,
+                                       avg_path_length, 
+                                       #connectedness, 
+                                       efficiency,ei, 
+                                       prunk.pu, prunk.dyads
+                                       ) %>% 
+  mutate(network="affiliative")
+
+```
+
+
+### agonistic
+
+```{r}
+# aggression
+# agg_intdyads <- ag_alldyads  %>% 
+#   unite(dyad, c("id1", "id2"), sep="_", remove=F) %>% 
+#   semi_join(int_dyads, b="dyad")
+# length(unique(agg_intdyads$id1))
+
+agg_alldyads <- left_join(int_dyads2 , ag_alldyads_fall) 
+
+# matrix
+    ## controlled for observation bias
+  mx.agg <- reshape2::dcast(agg_alldyads, id1~id2, value.var="frequency") #head(ref.behavior1.mx)
+  mx.agg[is.na(mx.agg)] <- 0 #for linearity measure, matrix needs to be fully filled, no NAs
+  mx.agg <- matrix.please(mx.agg)
+  
+
+  #network
+  graph.agg <- graph_from_adjacency_matrix(mx.agg, "directed", weighted=T, diag=F) 
+  plot(graph.agg)
+
+  
+  
+#metrics
+   g <- graph.agg
+
+# individual metrics
+
+  dom_ec <- dom_ec(mx.agg) # dominance rank  
+  
+  degree <- igraph::degree(g, mode = c("out"))
+  
+  strength <- igraph::strength(g, mode = ("out"), weights = E(g)$weight)
+  
+  closeness <- igraph::closeness(g)
+  
+  between <- igraph::betweenness(g, 
+                                directed = TRUE,
+                                weights = E(g)$weight)
+  
+  eigenvector <- (igraph::eigen_centrality(g, directed = TRUE,
+                                      weights = E(g)$weight))
+  ec <- eigenvector$vector
+  ec.value <- eigenvector$value
+  
+  # page rank
+  pr.list <- igraph::page_rank(g, 
+                          directed = TRUE, 
+                          weights = E(g)$weight)
+  prv <- pr.list$vector
+  pr <- prv/max(prv)
+  
+  
+  metrics_agg_ind <-  cbind.data.frame(
+                           int.ids, 
+                           dom_ec,
+                           degree,
+                           strength, 
+                           between, 
+                           closeness,
+                           ec,
+                           pr) %>% 
+    mutate(network="agonistic")
+  
+  
+# network metrics
+  diameter = diameter(g)
+  
+  density = edge_density(g)
+  
+  avg_path_length = average.path.length(g) # mean_distance = mean_distance((g)), -> calculates the same
+  
+  #connectedness = vertex.connectivity(g)
+  
+  ei = einet::effective_information(g, effectiveness = FALSE)
+  efficiency <- ei/log2(length(int.ids)) #selectdegus$id
+
+  
+  #Find proportion unknown relationships, a measure of sparseness
+  prunk <- EloRating::prunk(mx.agg)
+  prunk.pu <- as.numeric(prunk[1])
+  prunk.dyads <- as.numeric(prunk[2]) 
+  
+  # dominance metrics
+  #Find linearity
+  linearity <- EloRating::h.index(mx.agg, loops = 1000)
+  linearity <- linearity[3,2]
+
+  #Find steepness
+  steepness <- steepness::getStp(mx.agg, method="Dij")
+  
+  #Triangle transitivity
+  transi <- EloRating::transitivity(mx.agg, runs = 1000)
+  transi.Pt <- transi[1]  # proportion of transitive triads
+  transi.ttri <- transi[2]  # triangle transitivity
+
+job::job({  
+  # dominance pattern
+  focus <- dom_focus(mx.agg)
+  position <- dom_position(mx.agg)
+  fp <- cbind.data.frame(focus, position)
+  colnames(fp) <- c("focus", "position")
+  
+  #Compute blur models
+  blur <- dom_make_blur_data(mx.agg)
+  
+
+#Find strategy
+  dompattern <- dom_categorize_strategy(data=fp, blur_data=blur)  
+})
+  
+metrics_agg_group <- cbind.data.frame(ec.value,
+                                       diameter, 
+                                       density,
+                                       avg_path_length, 
+                                       #connectedness, 
+                                       efficiency,ei, 
+                                       prunk.pu, prunk.dyads,
+                                       linearity,
+                                       steepness,
+                                       transi.ttri,
+                                       dompattern) %>% 
+  mutate(network="agonistic")
+  
+```
+
+
+### save files
+combine all metrics for the single layer networks
+
+
+```{r prop controlled for observation bias}
+# metrics_aff_ind$id <- as.character(metrics_aff_ind$id)
+# metrics_agg_ind$id <- as.character(metrics_agg_ind$id)
+
+freq.id_metrics <- bind_rows(#metrics_ass_ind, 
+                        metrics_prox_ind,
+                        metrics_aff_ind, 
+                        metrics_agg_ind)
+
+write.csv(freq.id_metrics, "../results/id_freqmetrics_fall24_108degus.csv")
+
+freq.network_metrics <- bind_rows(#metrics_ass_group, 
+                             metrics_prox_group,
+                             metrics_aff_group, 
+                             metrics_agg_group)
+
+write.csv(freq.network_metrics, "../results/network_freqmetrics_fall24_108degus.csv")
+
+
+```
+
+
+## matrix correlations
+
+```{r}
+## pearson or spearman correlation (null dyads excluded)
+# normal distribution?
+hist(agg_alldyads$n)
+hist(prox_alldyads$n)
+# linear relationship?
+plot(agg_alldyads$n,prox_alldyads$n) 
+
+
+
+## correlation matrix  
+  
+# Mantel test
+  #mantel.test(obs.crowd.mx, obs.disp.mx) # ape package
+
+  cor.result <- vegan::mantel(mx.aff, mx.prox, method = "spearman") # vegan package
+  cor.matrix <- cor.result$statistic
+
+  cor.result <- vegan::mantel(mx.agg, mx.prox, method = "spearman") # vegan package
+  cor.matrix <- cor.result$statistic
+  
+  cor.result <- vegan::mantel(mx.aff, mx.agg, method = "spearman") # vegan package
+  cor.matrix <- cor.result$statistic
+```
+
+Mantel correlation between proximity and affiliation is highly correlated (Rs = 0.57, p = 0.001), between proximity and aggression  is correlated (Rs = 0.27, p = 0.001), and between affiliation and aggression (Rs= 0.29, p = 0.001). 
+
+# Multilayer network 
+
+## frequency multilayer network
+```{r create multilayer network}
+df3list <- list( prox_alldyads, aff_alldyads, agg_alldyads) #ass_intdyads,
+g3list <- list(graph.prox, graph.aff, graph.agg) # list of graphs graph.ass, 
+node3tensor <- list( mx.prox, mx.aff, mx.agg) # NodesTensor, list of matrices mx.ass,
+layer3tensor <- diagR(c(1, 1), 3, 1) + diagR(c(1, 1), 3, -1)# LayerTensor
+l = 3 # Layers, number of layers 
+n = length(int.ids) # Nodes, number of nodes 
+
+# build graph
+m <- BuildSupraAdjacencyMatrixFromEdgeColoredMatrices(NodesTensor = node3tensor, 
+                                                      LayerTensor = layer3tensor,
+                                                      Layers = l,
+                                                      Nodes = n)
+
+# aggregate
+m.pool<- muxViz::GetAggregateMatrix(node3tensor, Layers = l, Nodes = n)
+graph.pool <- GetAggregateNetworkFromNetworkList(g3list)
+
+# plot
+layercolors <- c("#332288", "#44AA99", "#CC6677") #"#88CCEE", 
+
+plot_multiplex(g3list,
+  layercolors,
+  edge.colors = "grey",
+  node.colors = "auto",
+  node.size.values = 0.5,
+  node.alpha = 1,
+  edge.alpha = 1,
+  layout = "fr",
+  show.legend = FALSE)
+
+```
+
+
+```{r}
+# multilayer metrics (SupraAdjacencyMatrix, Layers, Nodes)
+
+path <-	GetMultiPathStatistics(m, l, n)
+m.apl <- path$avg.path.length
+
+cluster<- GetAverageGlobalClustering(m, l, n) # The result ranges from 0 (no clustering) to 1 (maximal clustering/cohesion). 
+
+overlap <- GetAverageGlobalOverlapping(m, l, n) #High overlap = cohesive multiplex structure; low overlap = more segregated/interlayer variation.
+
+assort <- GetInterAssortativityTensor(m, l, n, isDirected= T, Type = "TT")
+assort$InterSpearman
+
+# diameter
+g_multi <- graph_from_adjacency_matrix(m, mode = "undirected", weighted = NULL)
+diameter <- diameter(g_multi, directed = FALSE, unconnected = TRUE)
+
+# density 
+num_nodes_multi <- nrow(m)
+num_edges_multi <- sum(m[upper.tri(m)] != 0)
+max_edges_multi <- num_nodes_multi * (num_nodes_multi - 1) / 2
+
+density <- num_edges_multi / max_edges_multi
+
+# aggregate metrics
+# Density for aggregate network (monoplex)
+num_nodes <- nrow(m.pool)
+
+# Number of edges for undirected network without loops
+num_edges <- sum(m.pool[upper.tri(m.pool)] != 0)
+
+# Maximum possible edges 
+max_edges <- num_nodes * (num_nodes - 1) / 2
+
+# Calculate density
+density_pool <- num_edges / max_edges
+print(density_pool)
+  
+  
+# path.pool <-	GetMultiPathStatistics(m.pool, l, n)
+# m.pool.apl <- path.pool$avg.path.length
+# 
+# cluster.pool <- GetAverageGlobalClustering(m.pool, l, n) # SupraAdjacencyMatrix, Layers, Nodes
+# 
+# overlap.pool <- GetAverageGlobalOverlapping(m.pool, l, n)
+
+
+#### combine -------------
+
+metricsmultilayer24 <-  cbind.data.frame(
+                                   diameter, 
+                                   density,
+                                    m.apl,
+                                    cluster,
+                                    overlap,
+                                    density_pool) %>% 
+  mutate(network="multilayer",
+         year="2024")
+
+write.csv(metricsmultilayer24, "../results/metricsmultilayer24.csv")
+```
+
+
+# Key individuals
+
+
+```{r}
+rankings <- bind_cols(metrics_aff_ind$int.ids, 
+                      metrics_prox_ind$between,
+                      metrics_aff_ind$ec,
+                      metrics_agg_ind$degree)
+names(rankings) <- c("id", "proximity", "affiliative", "agonistic")   
+#write.csv(rankings, "results/centrality_rankings_fall24_108degus.csv") 
+
+# perhaps standardize values
+rankings_st <- rankings %>% 
+   mutate_at(c('proximity', 'affiliative', 'agonistic'),~(scale(.) %>% as.vector))
+
+write.csv(rankings_st, "../results/centrality_rankings_scaled_fall24_108degus.csv")  
+```
+
+
+
+## borda count
+
+```{r borda function count}
+#borda <- function(centrality_rankings.csv, bordacount) {  #, use_three=TRUE
+  # "centrality_rankings.csv"is the import csv to use
+  # output is the name of the output file with Borda ranks in it
+  # use_three sets the columns to use in ranking to just 3 instead of all
+  # Importing CSV with rankings to use ----
+  rankings_st <- read.csv(file = "../results/centrality_rankings_scaled_fall24_108degus.csv") # have to import to get the "x" column (line 624)
+
+  # Calculating Borda Count ----
+  # More points for higher position
+  # Position 1 gets rankmax points, position 2 gets rankmax - 1 points, etc.
+  # Where rankmax is the largest rank within a measure
+  rankmax <- max(rankings_st$agonistic)
+  rankings_st$BordaScore <- rankings_st$agonistic * -1 + rankmax # Normalize to zero
+  rankmax <- max(rankings_st$affiliative)
+  rankings_st$BordaScore <- rankings_st$BordaScore - rankings$affiliative + rankmax
+  rankmax <- max(rankings_st$proximity)
+  rankings_st$BordaScore <- rankings_st$BordaScore - rankings_st$proximity + rankmax
+  # if (use_three == FALSE) {
+  #   rankmax <- max(rankings$Police)
+  #   rankings$BordaScore <- rankings$BordaScore - rankings$Police + rankmax
+  #   rankmax <- max(rankings$Grooming)
+  #   rankings$BordaScore <- rankings$BordaScore - rankings$Grooming + rankmax
+  # } else {
+  #   rankings <- rankings[, -which(names(rankings) %in% c('Police', 'Pol..Gr.'))]
+  # }
+
+  # Rewriting Borda to be an order of Borda Rank
+  ord <- rankings_st[order(rankings_st$BordaScore, decreasing = F), ]
+  rankings_st$Borda <- 0
+  a <- 1 # Current rank
+  for (id in 1:dim(ord)[1]) {
+    if (id == 1) {
+      rankings_st[rankings_st$X == ord[id, 'X'], 'Borda'] <- a  # X = the orderkey number when you import the CSV file
+    }
+    else { # Finds any ties
+      previous <- rankings_st[rankings_st$X == ord[id - 1, 'X'], 'BordaScore']
+      current <- rankings_st[rankings_st$X == ord[id, 'X'], 'BordaScore']
+      if (current != previous) {
+        a = a + 1
+      }
+      rankings_st[rankings_st$X == ord[id, 'X'], 'Borda'] <- a
+    }
+  }
+  
+  # Write to csv ----
+ # write.csv(rankings[, -which(names(rankings) %in% c('BordaScore'))], bordacount)
+#}
+
+  write.csv(rankings_st, "../results/bordaranking_scaled_fall24_108degus.csv") 
+  
+```
+
+## import ranking data
+
+```{r import data}
+
+# rankings_st <- rankings %>% 
+#    mutate_at(c('proximity', 'affiliative', 'agonistic'),~(scale(.) %>% as.vector))
+# 
+# write.csv(rankings_st, "centrality_rankings_scaled_fall90degus.csv")  
+
+rankings_st <- read.csv( "../results/bordaranking_scaled_fall24_108degus.csv")
+
+```
+
+##  threshold
+threshold of who is key individual?
+- first ten
+- lower quartile
+
+Have to check whether key individuals are the same when standardizing or not!
+```{r}
+
+topten_st <- rankings_st %>% 
+  filter(Borda<11) %>% 
+  select(id) %>%    # 10 individiduals
+  mutate(toptenkey="key")
+  
+lowerq_st <- rankings_st %>% 
+  summarize(q= quantile(BordaScore, probs = 0.25)) 
+
+topborda_st <- rankings_st %>% 
+  filter(BordaScore<lowerq_st$q) %>%  # 27 individuals
+  select(id, BordaScore, Borda) %>% 
+  mutate(qkey="key")
+  #rename(BS_st=BordaScore, 
+         #B_st=Borda)
+
+```
+
+## plots
+```{r borda distribution}
+borda_st <-ggplot(rankings_st,  
+                         aes(y= BordaScore, x=reorder(as.factor(id), desc(-Borda)))) +
+  geom_point()+
+  theme_classic() +
+  labs(x="id", y="Borda count", title="") +
+  theme(axis.text.x = element_text(angle=90, size=5))+
+  geom_vline(xintercept=10, linetype="dashed", color="darkgrey") +
+  geom_vline(xintercept=27, linetype="dashed", color="darkgrey")
+borda_st
+
+
+```
+```{r}
+degus$id <- as.integer(degus$id)
+
+# with id colored according to sex
+borda_fall <- rankings_st %>% 
+  left_join(dplyr::select(degus, id, sex))  %>% 
+  mutate(sex_num=ifelse(sex=="f", 0, 1),
+         colorx = ifelse(sex_num==0,'#5D3A9B', "#E66100")) %>%
+  arrange(Borda)
+
+
+#colorx <- borda_fall$colorx
+
+plot_bordast_fall24 <-ggplot(borda_fall,  
+                         aes(y= BordaScore, x=reorder(id, desc(-Borda)), color=sex)) +
+  geom_point()+
+  scale_color_manual(values = c("f"='#5D3A9B', "m"="#E66100")) +  
+  theme_classic() +
+  scale_y_reverse()+
+  labs(x="Degu ID", y="Borda count", title="Gestation period 2024") +
+  theme(axis.text.x = ggtext::element_markdown(angle=90, size=5),
+        legend.position="bottom") +
+  scale_x_discrete(labels = function(id) {
+    paste0("<span style='color:", borda_fall$colorx[borda_fall$id == id], "'>", id, "</span>")
+  }) +
+  
+  # add threshold key indviduals
+  #geom_vline(xintercept=10.5, linetype="dashed", color="darkgrey") +
+  #geom_vline(xintercept=length(topborda_st$id) +.5, linetype="dotted", color="darkgrey") +
+  geom_vline(xintercept=15.5, linetype="dashed", color="darkgrey") 
+  
+  # add labels
+  #geom_label(aes(x = 5.5, y = 13, label="Top 10"), color="darkgrey") +
+  #geom_label(aes(x = 17.5, y = 15, label="Lower quantile"), color="darkgrey")
+plot_bordast_fall24
+
+
+ggsave("../figures/bordascore_st_fall24_108degus.pdf", width = 7, height=4)
+
+```
+
+
+
+
+
+```{r rankings plot}
+degus$id <- as.integer(degus$id)
+
+borda_st_long <- rankings_st %>% 
+  dplyr::select(-Borda, -BordaScore) %>% 
+  pivot_longer(cols = c(-id, -X), #z2.degus, 
+               names_to = "layer",
+               values_to = "rank") %>% 
+  left_join(dplyr::select(degus, id, sex)) %>%
+    mutate(sex_col=if_else(sex=="f", "#E66100", "#5D3A9B" )) 
+
+
+# borda_st_long$layer <- factor(borda_st_long$layer, 
+#                          levels=c("Borda", "BordaScore", "proximity", "affiliative", "agonistic"),
+#                          labels=c("borda_rank", "borda_score", "proximity",
+#                                   "affiliative", "agonistic"))
+
+plot_rankings <-borda_st_long %>% 
+  #arrange(rank) %>%
+  #dplyr::filter(id %in% z2.degus) %>%
+  ggplot( aes(x= layer, y=reorder(id, rank), fill=rank)) +
+     geom_tile(colour="white") +
+     scale_fill_viridis(discrete=FALSE) +
+     #scale_fill_gradient(low = "steelblue", high = "yellow") +
+          #ylim(c(0, max(pr.df$var2) + 0.5)) +
+     #scale_y_discrete(breaks=y_breaks, labels=y_labels) +
+     #coord_polar(theta="x") +
+     theme(panel.background=element_blank(),
+           axis.title=element_blank(),
+           panel.grid=element_blank(),
+           axis.text.x=element_text(size=18),#angle = 90
+           axis.ticks=element_blank(),
+           axis.text.y=element_text(color=borda_st_long$sex_col))
+plot_rankings
+
+ggsave(filename="plot_PageRank_zona2_fine.png", plot=pr.plot.long, height=7, width=7)
+ggsave("plot_PageRank_zona2.pdf")
+
+```
+
+
+# Save work
+```{r}
+save.image(file = "../results/key_degus_fall2024.RData")
+```
+
+

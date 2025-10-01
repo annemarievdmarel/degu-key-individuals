@@ -1,0 +1,1077 @@
+---
+title: "Analysis_key-degu-quantification"
+author: "Annemarie van der Marel"
+date: "2024-09-12"
+output: html_document
+---
+
+# load libraries
+```{r setup}
+#knitr::opts_chunk$set(echo = TRUE)
+
+
+library(tidyverse)
+library(job) # to run models in the background
+library(gamlss)
+library(lme4)
+library(ggpubr)
+#library(hrbrthemes)
+library(viridis)
+#library(brms)
+library(glmmTMB)
+library(tidybayes)
+
+```
+
+Stan settings
+```{r}
+mycores <- parallel::detectCores() - 2
+
+options(mc.cores = parallel::detectCores())
+#rstan_options(auto_write = TRUE)
+```
+
+
+Fall: Who are the key individuals?
+
+# get data ready
+
+## import data
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+degus_zone <- read.csv("../data/degusID.csv") %>% 
+  dplyr:: select(id, zone)
+degus_zone$id <- as.integer(degus_zone$id)
+
+degu_age <- read.csv("../data/degu_survival_age_21-24.csv") %>% 
+  filter(year ==2023, age_yrs!="NA") %>% 
+  dplyr::select(id, age, censored, age_yrs)
+table(degu_age$age_yrs)
+
+degus_characteristics23 <- read.csv("../results/idcharacteristics23.csv") %>% 
+  dplyr::select(-X) %>% 
+  left_join(degu_age, by="id")
+#degus_characteristics23$groupid[degus_characteristics23$groupid=="13a"] <- 130  # done in excel
+n_distinct(degus_characteristics23$groupid)
+table( degus_characteristics23$age_yrs)
+
+rankings_fall <- read.csv("../results/bordaranking_scaled_fall23_93degus.csv") %>%  
+  dplyr::select(-X.1) %>% 
+  left_join(degus_zone)
+glimpse(rankings_fall)
+
+
+
+
+```
+
+##who are key
+- top 10
+- lowest quantile threshold (23 key)
+- cutoff (biggest drop in borda score -> 14 key)
+
+```{r}
+lowerq_st <- rankings_fall %>% 
+  summarize(q= quantile(BordaScore, probs = 0.25))
+
+topborda_st <- rankings_fall %>% 
+  filter(BordaScore<lowerq_st$q) %>%  
+  dplyr::select(id, BordaScore, Borda) %>% 
+  mutate(qkey="key")
+
+degu_keys <- rankings_fall %>% 
+   left_join(degus_characteristics23, by=c("id")) %>% 
+    mutate(colorx = ifelse(sex=="F",'#5D3A9B', "#E66100"),
+         qkey=if_else(BordaScore<lowerq_st$q, "yes", "no"),
+         thkey=if_else(Borda<15, "yes", "no"),  # cutoff -> 14 key individuals
+         topkey=if_else(Borda<11, "yes", "no")
+         )
+
+```
+
+## scale borda score
+```{r}
+scale_values <- function(x){(x-min(x))/(max(x)-min(x))}
+
+# rankings reversed, so that we have many 0's for better distribution
+
+rankXchars_nona <- degu_keys %>%
+  mutate(bordarankreverse= abs(Borda-max(Borda)),
+         bordareverse=abs(BordaScore-max(BordaScore)), 
+         Borda_st=scale(Borda),
+         BSsc = scale_values(bordareverse))  #scale to beta distribution (indviduals close to 1 -> key individuals: so on reverse score)
+#rankXchars_nona$groupid <- as.factor(rankXchars_nona$groupid)
+
+
+rankXchars_nona <- rankXchars_nona %>% 
+  dplyr::select(id, Borda, BordaScore, bordareverse, topkey, thkey, qkey, zone, sex, meanagd, bodycondition, mean_latency, hr50 ) %>% 
+  na.omit()
+# 75 degus with all chars of the 93
+
+
+```
+
+
+
+## collinearity
+
+http://www.sthda.com/english/wiki/correlation-matrix-a-quick-start-guide-to-analyze-format-and-visualize-a-correlation-matrix-using-r-software
+
+my general rule is to not use variables with r>=0.5.
+
+
+
+```{r}
+
+# select continuous variables to include in correlation matrix
+df <- rankXchars_nona %>% 
+  dplyr::select(meanagd, mean_latency, bodycondition, hr50) %>% 
+  na.omit()
+
+df <- degu_rankings %>% 
+  dplyr::select(meanagd, mean_latency, hr50) # remove body condition
+
+#create matrix
+res <- round(cor(df),2)
+#write.csv(res, "./results/covariate correlation_fall23.csv")
+
+
+# visalise matrix
+pairs(df)
+psych::pairs.panels(df) # Generate scatterplots with Pearson correlations
+
+jpeg(file="./results/correlation matrix_v5.jpeg")
+corrplot::corrplot(round(cor(df),2), type = "upper", order = "hclust", 
+         tl.col = "black", tl.srt = 45)
+dev.off()
+
+#PerformanceAnalytics::chart.Correlation(my_data, histogram=TRUE, pch=19)
+
+#library(Hmisc)
+#res2<-Hmisc::rcorr(as.matrix(covariates[,5:15]))
+
+#corrplot::corrplot(res2$r, type="upper", order="hclust", 
+#         p.mat = res2$P, sig.level = 0.01, insig = "blank")
+
+
+```
+### females
+collinearity by sex because of the difference in agd
+```{r collinearity females}
+
+# select continuous variables to include in correlation matrix
+df <- rankXchars_nona %>% 
+  filter(sex=="F") %>% 
+  dplyr::select(meanagd, mean_latency, bodycondition, hr50) %>% 
+  na.omit()
+
+#create matrix
+res <- round(cor(df),2)
+#write.csv(res, "./results/covariate correlation_fall23.csv")
+
+
+# visalise matrix
+pairs(df)
+psych::pairs.panels(df) # Generate scatterplots with Pearson correlations
+
+#jpeg(file="./results/correlation matrix_v5.jpeg")
+corrplot::corrplot(round(cor(df),2), type = "upper", order = "hclust", 
+         tl.col = "black", tl.srt = 45)
+#dev.off()
+```
+### males
+```{r collinearity males}
+
+
+# select continuous variables to include in correlation matrix
+df <- rankXchars_nona %>% 
+  filter(sex=="M") %>% 
+  dplyr::select(meanagd, mean_latency, bodycondition, hr50) %>% 
+  na.omit()
+
+#create matrix
+res <- round(cor(df),2)
+#write.csv(res, "./results/covariate correlation_fall23.csv")
+
+
+# visalise matrix
+pairs(df)
+psych::pairs.panels(df) # Generate scatterplots with Pearson correlations
+
+#jpeg(file="./results/correlation matrix_v5.jpeg")
+corrplot::corrplot(round(cor(df),2), type = "upper", order = "hclust", 
+         tl.col = "black", tl.srt = 45)
+#dev.off()
+```
+
+
+
+# Key vs characteristic
+
+## binomial GLMM 
+
+###top 10 key individuals
+
+```{r}
+keychars <- rankXchars_nona %>% 
+  mutate(key_num=if_else(topkey=="yes", 1, 0)) 
+  #dplyr::select(thkey, sex, meanagd, bodycondition, mean_latency, hr50, zone, groupid)
+
+m.topkey <- glmer( key_num ~ sex*meanagd+ bodycondition+ mean_latency+ hr50+ (1|zone),
+                  data = keychars,
+                  family = binomial
+                  )
+summary(m.topkey)
+plot(m.topkey)
+performance::model_performance(m.topkey)
+
+m.topkey1 <- glmer( key_num ~ sex+ masculinization + bodycondition+ docility+ hr50+ (1|zone),
+                  data = na.omit(keychars),
+                  family = binomial
+                  )
+summary(m.topkey1)
+
+performance::compare_performance(m.topkey, m.topkey1)
+```
+
+###threshold number of key individuals
+
+```{r}
+keychars <- rankXchars_nona %>% 
+  mutate(key_num=if_else(thkey=="yes", 1, 0)) 
+  #dplyr::select(thkey, sex, meanagd, bodycondition, mean_latency, hr50, zone, groupid)
+
+m.thkey <- glmer( key_num ~ sex*meanagd+ bodycondition+ mean_latency+ hr50+ (1|zone),
+                  data = na.omit(keychars),
+                  family = binomial
+                  )
+summary(m.thkey)
+plot(m.thkey)
+performance::model_performance(m.thkey)
+
+m.thkey1 <- glmer( key_num ~ sex+ masculinization + bodycondition+ docility+ hr50+ (1|zone),
+                  data = na.omit(keychars),
+                  family = binomial
+                  )
+summary(m.thkey1)
+
+performance::compare_performance(m.thkey, m.thkey1)
+```
+### lower quantile key individuals
+
+```{r}
+keychars <- rankXchars_nona %>% 
+  mutate(key_num=if_else(qkey=="yes", 1, 0)) 
+  #dplyr::select(thkey, sex, meanagd, bodycondition, mean_latency, hr50, zone, groupid)
+
+m.qkey <- glmer( key_num ~ sex*meanagd+ bodycondition+ mean_latency+ hr50+ (1|zone),
+                  data = keychars,
+                  family = binomial
+                  )
+summary(m.qkey)
+plot(m.qkey)
+performance::model_performance(m.qkey)
+
+m.qkey1 <- glmer( key_num ~ sex+ masculinization + bodycondition+ docility+ hr50+ (1|zone),
+                  data = na.omit(keychars),
+                  family = binomial
+                  )
+summary(m.qkey1)
+
+performance::compare_performance(m.qkey, m.qkey1)
+```
+continuous predictor variables perform way better than models with categorical variables. 
+
+```{r}
+performance::compare_performance(m.topkey, m.thkey, m.qkey)
+```
+
+
+
+
+## plots 
+###sex
+```{r}
+# sex
+ggplot( rankXchars_nona, aes(x=sex, y=BordaScore)) +
+  geom_boxplot()
+
+chisq.test(degu_rankings$qkey, degu_rankings$sex)
+
+ggplot(rankXchars_nona, aes(x=sex, fill=qkey)) +
+  geom_bar(position = "dodge") +
+  theme_classic() +
+  scale_fill_manual( values=c("#fdae61", "#0571b0")) +
+  labs(y="Count", x= "Sex") +
+  theme(axis.text = element_text(size=18),
+        title = element_text(size=20),
+        legend.position = "bottom") 
+  #geom_boxplot(position = position_dodge(width = 0.8))
+
+ggplot(rankXchars_nona, aes(y=BordaScore, x=sex, color=sex)) +
+    geom_violin(width=0.5, color="black")+
+  geom_boxplot(width=0.2, color="grey", alpha=0.6) +
+  geom_jitter(  width=0.05) +
+  theme_classic() +
+  scale_y_reverse() + #limits = c(90, 1)
+  scale_color_manual( values=alpha(c("#fdae61", "#0571b0"),0.4)) +
+  labs(y="Borda score") +
+  theme(axis.text = element_text(size=18),
+        title = element_text(size=20),
+        legend.position = "none") 
+```
+### AGD
+```{r}
+# mean agd
+ggpubr::ggqqplot(degu_rankings, "meanagd")# shapiro test p >0.05, data normally distributed
+shapiro.test(degu_rankings$meanagd)
+chisq.test(degu_rankings$qkey, degu_rankings$meanagd)
+
+ggplot(rankXchars_nona, aes(y=meanagd, x=thkey, color=sex)) +
+  geom_boxplot(position = "dodge") +
+  geom_jitter(  width=0.05) +
+  facet_grid(~sex) +
+  theme_classic() +
+  scale_color_manual( values=c("#fdae61", "#0571b0")) +
+  labs(y="Anogenital distance (mm)", x= "Key ID") +
+  theme(axis.text = element_text(size=18),
+        title = element_text(size=20),
+        legend.position = "bottom") 
+
+ggplot(rankXchars_nona, aes(x=qkey, y=meanagd, color=sex, group=sex)) +
+  geom_violin(width=0.5, color="black")+
+  geom_boxplot(width=0.2, color="grey", alpha=0.6) +
+  geom_jitter(  width=0.05) +
+  # geom_smooth(method = "lm", fill = NA) +
+  theme_classic() +
+  scale_y_reverse() +
+  scale_color_manual( values=alpha(c("#fdae61", "#0571b0"),1)) +
+  labs(y="AGD") +
+  theme(axis.text = element_text(size=18),
+        title = element_text(size=20),
+        legend.position = "none") 
+
+chisq.test(degu_rankings$key, degu_rankings$masculinization)
+ggplot(na.omit(degu_rankings), aes(y=BordaScore, x=masculinization, color=masculinization)) +
+  geom_violin(width=0.8, color="black")+
+  geom_boxplot(width=0.2, color="grey", alpha=0.6) +
+  geom_jitter(  width=0.05) +
+  theme_classic() +
+  scale_y_reverse() +
+  scale_color_manual( values=alpha(c("#33a02c" , "#7b3294", "#ca0020"),0.4)) +
+  labs(y="Borda rank") +
+  theme(axis.text = element_text(size=18),
+        title = element_text(size=20),
+        legend.position = "none") 
+
+```
+###age
+```{r}
+
+#age
+chisq.test(degu_rankings$key, degu_rankings$age_yrs)
+ggplot(rankXchars_nona, aes(y=BordaScore, x=as.factor(age_yrs), color=sex)) +
+    geom_violin(width=0.5, color="black")+
+  geom_boxplot(width=0.2, color="grey", alpha=0.6) +
+  geom_jitter(  width=0.05) +
+  theme_classic() +
+  scale_y_reverse() + #limits = c(90, 1)
+  scale_color_manual( values=alpha(c("#fdae61", "#0571b0"),0.4)) +
+  labs(y="Borda score") +
+  theme(axis.text = element_text(size=18),
+        title = element_text(size=20),
+        legend.position = "none") 
+```
+### body condition
+```{r}
+
+
+
+# bodycondition 
+chisq.test(degu_rankings$key, degu_rankings$bodycondition)
+
+ggplot(rankXchars_nona, aes(y=bodycondition, x=thkey, color=sex)) +
+    geom_violin(width=0.5, color="black")+
+  geom_boxplot(width=0.2, color="grey", alpha=0.6) +
+  geom_jitter(  width=0.05) +
+  theme_classic() +
+  scale_color_manual( values=c("#fdae61", "#0571b0")) +
+  labs(y="Body condition", x= "key ID") +
+  theme(axis.text = element_text(size=18),
+        title = element_text(size=20),
+        legend.position = "bottom") 
+
+
+ ggplot(na.omit(degu_rankings), aes(y=BordaScore, x=bodycondition)) +
+  geom_point() +
+  theme_classic() +
+  scale_y_reverse() +
+  geom_smooth(method = "lm", fill = NA) +
+  labs(y="Borda rank", x="Body condition") +
+  theme(axis.text = element_text(size=18),
+        title = element_text(size=20))
+ 
+```
+###latency
+```{r}
+
+ # docility
+ chisq.test(degu_rankings$key, degu_rankings$docility)
+ 
+ggplot(rankXchars_nona, aes(y=mean_latency, x=thkey, color=sex)) +
+    geom_violin(width=0.5, color="black")+
+  geom_boxplot(width=0.2, color="grey", alpha=0.6) +
+  geom_jitter(  width=0.05) +
+  theme_classic() +
+  scale_color_manual( values=c("#fdae61", "#0571b0")) +
+  labs(y="Latency", x= "key ID") +
+  theme(axis.text = element_text(size=18),
+        title = element_text(size=20),
+        legend.position = "bottom") 
+
+ggplot(na.omit(degu_rankings), aes(y=BordaScore, x=docility)) +
+  geom_boxplot() +
+  theme_classic() +
+  scale_y_reverse() +
+  geom_smooth(method = "lm", fill = NA) +
+  labs(y="Borda rank", x="Latency to leave trap") +
+  theme(axis.text = element_text(size=18),
+        title = element_text(size=20))
+ 
+ # boldness
+ chisq.test(degu_rankings$key, degu_rankings$mean_latency)
+ ggplot(na.omit(degu_rankings), aes(y=BordaScore, x=mean_latency)) +
+  geom_point() +
+  theme_classic() +
+  scale_y_reverse() +
+  geom_smooth(method = "lm", fill = NA) +
+  labs(y="Borda rank", x="Latency to leave trap") +
+  theme(axis.text = element_text(size=18),
+        title = element_text(size=20))
+```
+
+### home range
+```{r}
+
+# exploration
+ chisq.test(degu_rankings$key, degu_rankings$hr50) 
+
+ggplot(rankXchars_nona, aes(y=hr50, x=thkey, color=sex)) +
+    geom_violin(width=0.5, color="black")+
+  geom_boxplot(width=0.2, color="grey", alpha=0.6) +
+  geom_jitter(  width=0.05) +
+  theme_classic() +
+  scale_color_manual( values=c("#fdae61", "#0571b0")) +
+  labs(y="Core home range (50%)", x= "key ID") +
+  theme(axis.text = element_text(size=18),
+        title = element_text(size=20),
+        legend.position = "bottom") 
+
+
+ggplot(na.omit(degu_rankings), aes(y=BordaScore, x=hr50)) +
+  geom_point() +
+  theme_classic() +
+  scale_y_reverse() +
+  geom_smooth(method = "lm", fill = NA) +
+  labs(y="Borda rank", x="Core home range (50%)") +
+  theme(axis.text = element_text(size=18),
+        title = element_text(size=20))
+```
+
+# Rank vs characteristic
+## Choosing distribution 
+https://strengejacke.github.io/regressionmodels/
+
+
+```{r distribution}
+
+range(rankXchars_nona$BordaScore)
+
+# normally distributed?
+ggplot(rankXchars_nona, aes(x=BordaScore)) +  # BordaScore, bordarankreverse, bordareverse  Borda_st
+  geom_histogram()  # very right skewed
+
+
+# shapiro test p >0.05, data normally distributed
+ggpubr::ggqqplot(rankXchars_nona, "BordaScore")
+shapiro.test(rankXchars_nona$BordaScore)
+
+
+m <- lm(BordaScore ~ sex, data = rankXchars_nona)  # bordarankreverse  BordaScore
+summary(m)
+d <- data.frame(residuals = residuals(m),         # Residuals
+                std_residuals = stats::rstudent(m), # Studentized Residuals
+                fitted = fitted(m),          # Fitted values
+                cooks = cooks.distance(m))   # Cook's D
+d <- mutate(d, observation = 1:nrow(d))           # Observation number
+
+# histogram of residuals
+ggplot(data = d, aes(x = std_residuals)) +
+  geom_histogram(bins = 10)
+
+# Check for Normality: QQ Normality plot of residuals
+ggplot(data = d, aes(sample = std_residuals)) +
+  stat_qq() +
+  stat_qq_line()
+
+# Check heteroscedasticity or constant variance
+ggplot(d, aes(x = fitted, y = std_residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0)
+
+# Cook's D
+ggplot(d, aes(x = observation, y = cooks)) +
+  geom_point() +
+  geom_hline(yintercept = 1, linetype = "dotted") +
+  geom_hline(yintercept = 4/nrow(d), linetype = "dashed")
+# outliers
+d_outliers <- filter(d, cooks > 4/nrow(d))  # observation 258 (time_s =14.6)
+
+# distribution
+## BordaScore = consensus score
+fitdistrplus::plotdist(rankXchars_nona$BordaScore)
+fitdistrplus::descdist(rankXchars_nona$BordaScore, discrete = F) # beta distribution
+range(rankXchars_nona$BordaScore)
+
+##  scaled to beta distribution
+fitdistrplus::plotdist(rankXchars_nona$BSsc)
+fitdistrplus::descdist(rankXchars_nona$BSsc, discrete = F) # beta distribution
+range(rankXchars_nona$BSsc)
+
+## Borda = ranking (integers)
+fitdistrplus::plotdist(rankXchars_nona$Borda)
+fitdistrplus::descdist(rankXchars_nona$Borda, discrete = T) 
+fitdistrplus::descdist(rankXchars_nona$bordarankreverse, discrete = T) 
+
+## scaled borda score
+fitdistrplus::plotdist(as.numeric(rankXchars_nona$Borda_st))
+fitdistrplus::descdist(as.numeric(rankXchars_nona$Borda_st, discrete = F)) # Poisson distribution
+
+## Borda Score reverse
+fitdistrplus::plotdist(rankXchars_nona$bordareverse)
+fitdistrplus::descdist(rankXchars_nona$bordareverse, discrete = F) # beta distribution
+
+# Consensus ranking (gamlss)
+fit <- gamlss::fitDist(rankXchars_nona$BordaScore, k = 2, type = "realline", 
+               trace = FALSE, try.gamlss = TRUE)
+summary(fit)
+fit$fits  # best fit: SN2
+
+fit <- gamlss::fitDist(rankXchars_nona$bordareverse, k = 2, type = "realline", 
+               trace = FALSE, try.gamlss = TRUE)
+summary(fit)
+fit$fits  # best fit: SN2
+
+# ordinal rank
+fit <- gamlss::fitDist(rankXchars_nona$Borda, k = 2, type = "realline", 
+               trace = FALSE, try.gamlss = TRUE)
+summary(fit)
+fit$fits  # best fit: "PE" c("PE2") /sep4
+
+fit <- gamlss::fitDist(rankXchars_nona$bordarankreverse, k = 2, type = "realline", 
+               trace = FALSE, try.gamlss = TRUE)
+summary(fit)
+fit$fits  # best fit: "PE" c("PE2") /sep4
+```
+
+
+## Observed model
+
+### Reversed Borda Score (continuous) 
+right skewed data
+
+
+```{r gamma distribution-continuous}
+
+m.gam <-  lme4::glmer(bordareverse ~ sex * meanagd + bodycondition + mean_latency + hr50 + (1|zone), 
+                      family = Gamma(link = "log"), 
+                      data = rankXchars_nona) # singular fit
+m.gam1 <-  lme4::glmer(bordareverse ~ sex + meanagd + bodycondition + mean_latency + hr50 + (1|zone), 
+                      family = Gamma(link = "log"), 
+                      data = rankXchars_nona)
+m.gam2 <-  glm(bordareverse ~sex * meanagd + bodycondition + mean_latency + hr50 , 
+                      family = Gamma(link = "log"), 
+                      data = rankXchars_nona)
+
+m.agd <- gamlss::gamlss(bordareverse~ sex * meanagd + bodycondition + mean_latency + hr50 + (1|zone), 
+                    data = rankXchars_nona,
+                    family = "GA")  
+summary(m.agd)
+plot(m.agd)
+
+AIC(m.gam,m.gam1,  m.gam2,m.sn2, m.agd)
+performance::compare_performance(m.gam,m.gam1,  m.gam2,m.sn2, m.agd)
+```
+
+
+```{r skew normal 2 distribution}
+m.sn2 <- gamlss::gamlss(bordareverse ~ sex * meanagd + bodycondition + mean_latency + hr50 + (1|zone), 
+                    data = rankXchars_nona,
+                    family = "SN2")  
+summary(m.sn2)
+plot(m.sn2)
+AIC(m.sn2)
+```
+
+
+
+Get observed coefficients
+```{r}
+m <- m.sn2
+summary(m)
+
+sex.obs <- coefficients(m)[2]
+agd.obs <- coefficients(m)[3]
+bc.obs <- coefficients(m)[4]
+latency.obs <- coefficients(m)[5]
+hr50.obs <- coefficients(m)[6]
+sexXagd.obs <- coefficients(m)[8]
+
+observed.coefs <- cbind.data.frame(sex.obs, agd.obs, bc.obs, latency.obs, hr50.obs, sexXagd.obs)
+
+
+```
+
+
+
+# 1) Ref model on centrality
+Randomizing the dependent variable (centrality scores) across nodes while keeping the individual attributes fixed:
+
+Preserves the distribution of individual attributes exactly as observed.
+
+Breaks the association between the independent variables and centrality, creating a valid null distribution for the test statistic under the null hypothesis that individual attributes do not explain centrality.
+
+Maintains the inherent structure of the attributes, which is important because you hypothesize that these attributes explain centrality, not vice versa.
+
+Rationale
+Randomizing the dependent variable effectively assigns centrality scores randomly to nodes, simulating a scenario where centrality is unrelated to the node attributes.
+
+This maintains the original nonindependence or network structure related to attributes and allows you to formally test if the observed association between individual attributes and centrality is stronger than random expectation.
+
+```{r}
+# Fit your model on observed data
+fit_observed <- gamlss::gamlss(bordareverse ~ sex * meanagd + bodycondition + mean_latency + hr50 + (1|zone), 
+                    data = rankXchars_nona,
+                    family = "SN2")
+obs_deviance <- deviance(fit_observed)
+
+# Number of permutations
+nperm <- 1000
+perm_deviances <- numeric(nperm)
+
+for (i in 1:nperm) {
+  perm_data <- rankXchars_nona
+  perm_data$bordareverse <- sample(perm_data$bordareverse)  # Permute dependent variable to build null model
+
+  fit_perm <- try(gamlss(bordareverse~ sex * meanagd + bodycondition + mean_latency + hr50 + (1|zone),
+                         family=SN2, data=perm_data), 
+                  silent=TRUE)
+  if (!inherits(fit_perm, "try-error")) {
+    perm_deviances[i] <- deviance(fit_perm)
+  } else {
+    perm_deviances[i] <- NA
+  }
+}
+
+ # Remove failed fits
+perm_deviances <- na.omit(perm_deviances)
+
+# Calculate p-value
+p_value <- mean(perm_deviances <= obs_deviance)  # depending on test direction
+p_value <- mean(perm_deviances >= obs_deviance) 
+p_value
+p_deviance <- 1-sum(obs_deviance<perm_deviances)/length(perm_deviances)
+
+# plot 
+ref_deviance <- as.data.frame(perm_deviances)
+ggplot(ref_deviance, aes(x=perm_deviances)) +
+  geom_histogram(color="grey", fill="grey") +
+  theme_classic() +
+  labs(x= "Coefficient value", y="Frequency", title="") +
+  geom_vline(xintercept=obs_deviance, color="red") +
+  geom_vline(xintercept = rep(quantile(ref_deviance$perm_deviances, 0.025), 2), color="darkblue", lty=2) +
+  geom_vline(xintercept = rep(quantile(ref_deviance$perm_deviances, 0.975), 2), color="darkblue", lty=2) 
+
+```
+Null hypothesis is accepted. Individual attributes do not explain borda score in degus. 
+
+
+
+#2) Ref model on attributes 
+
+
+Reference model: node feature swap
+Step 1: What are the mechanisms that underlie who is a key individual?
+Step 2: Slope/coefficient of generalized linear mixed model: consensus ranking ~ sex + agd/masculinization level + personality/docility + body condition + (1|zone) or (1|groupID)
+Step 3: generate reference distribution -> node feature permutation-based reference model where we swapped attributes in the population a 1000 times. 
+Step 4: evaluation
+
+
+
+```{r excluding NAs}
+
+
+replicates <- 1000
+N <- length(rankXchars_nona$id)
+m.ref<- rep(NA,1000)
+#run=9
+
+# # model on scaled score --> not all ref models run
+coef.ref <- data.frame(runID=numeric(),
+                       sex.ref=numeric(),
+                       agd.ref=numeric(),
+                       bc.ref=numeric(),
+                       doc.ref=numeric(),
+                       hr.ref=numeric(),
+                       sexXagd.ref=numeric())
+
+ref.data <- rankXchars_nona
+
+#run <- 1
+
+for (run in 1:replicates) {
+  r.seed <- run
+  RNGkind(sample.kind="default") # code to get same random numbers across operating systems (mac vs windows)
+  set.seed(r.seed)
+  print(r.seed)
+  
+	# Randomise sex
+	s <- sample(1:N)
+	ref.data$sex_ref <- ref.data$sex[s]
+
+	# randomize masculinization
+	s <- sample(1:N)
+	ref.data$agd_ref <- ref.data$meanagd[s] 
+
+	
+	# randomize body condition
+	 s <- sample(1:N)
+	 ref.data$bc_ref <- ref.data$bodycondition[s]
+	
+	# randomize docility
+	s <- sample(1:N)
+	ref.data$doc_ref <- ref.data$mean_latency[s]
+	
+	# randomize home range
+	s <- sample(1:N)
+	ref.data$hr_ref <- ref.data$hr50[s]
+	
+
+	# re-run model
+ m.ref  <- gamlss::gamlss(bordareverse ~ sex_ref * agd_ref + bc_ref + hr_ref + doc_ref + (1|zone), 
+                    data = ref.data,
+                    family = "SN2")  
+ 
+ summary(m.ref)
+   
+   
+ # get coefficients scaled score
+sex.ref <- coefficients(m.ref)[2]
+agd.ref <- coefficients(m.ref)[3]
+bc.ref <- coefficients(m.ref)[4]
+hr.ref <- coefficients(m.ref)[5]
+doc.ref <- coefficients(m.ref)[6]
+sexXagd.ref <- coefficients(m.ref)[8]
+
+
+ runID <- paste0("run",str_pad(r.seed, 3, side="left", pad = "0"))
+
+ref.coefs <- data.frame(runID, sex.ref, agd.ref, bc.ref,doc.ref, hr.ref, sexXagd.ref)
+	
+coef.ref <- rbind.data.frame(ref.coefs, coef.ref)
+	
+}
+
+head(coef.ref)
+
+
+```
+
+
+##p-values 
+Are observed values significantly different from random values in reference models?
+
+find proportion of random values less than the observed values, you can use this as a kind of p value. p should be >0.975 for two-tailed test, >0.95 for one-tailed test for something significantly different from the random values in the reference model
+  
+```{r}
+# p-values 
+p.sex <- sum(observed.coefs$sex.obs<coef.ref$sex.ref)/length(coef.ref$sex.ref)
+p.sex
+p.agd <- sum(observed.coefs$agd.obs<coef.ref$agd.ref)/length(coef.ref$agd.ref)
+p.agd
+p.bc<- sum(observed.coefs$bc.obs<coef.ref$bc.ref)/length(coef.ref$bc.ref)
+p.bc
+
+p.latency <- sum(observed.coefs$latency.obs<coef.ref$doc.ref, na.rm=T)/length(coef.ref$doc.ref)
+p.latency
+
+p.hr <- sum(observed.coefs$hr50.obs<coef.ref$hr.ref)/length(coef.ref$hr.ref)
+p.hr
+
+p.sexXagd <- sum(observed.coefs$sexXagd.obs<coef.ref$sexXagd.ref, na.rm=T)/length(coef.ref$sexXagd.ref)
+p.sexXagd
+```
+
+
+```{r}
+
+
+
+plot.sex <- ggplot(coef.ref, aes(x=sex.ref)) +
+  geom_histogram(color="grey", fill="grey") +
+  theme_classic() +
+  labs(x= "Coefficient value sex", y="Frequency") +
+  geom_vline(xintercept=observed.coefs$sex.obs, color="red") +
+  geom_vline(xintercept = rep(quantile(coef.ref$sex.ref, 0.025), 2), color="darkblue", lty=2) +
+  geom_vline(xintercept = rep(quantile(coef.ref$sex.ref, 0.975), 2), color="darkblue", lty=2) 
+  #geom_text(x=-0.5, y=85, label="p = 0.001")
+plot.sex
+
+plot.agd <-  ggplot(coef.ref, aes(x=agd.ref)) +
+  geom_histogram(color="grey", fill="grey") +
+  theme_classic() +
+  labs(x= "Coefficient value AGD", y="Frequency") +
+  geom_vline(xintercept=observed.coefs$agd.obs, color="red") +
+  geom_vline(xintercept = rep(quantile(coef.ref$agd.ref, 0.025), 2), color="darkblue", lty=2) +
+  geom_vline(xintercept = rep(quantile(coef.ref$agd.ref, 0.975), 2), color="darkblue", lty=2)
+plot.agd
+
+# 
+plot.bc <- ggplot(coef.ref, aes(x=bc.ref)) +
+  geom_histogram(color="grey", fill="grey") +
+  theme_classic() +
+  labs(x= "Coefficient value BC", y="Frequency") +
+  geom_vline(xintercept=observed.coefs$bc.obs, color="red") +
+  geom_vline(xintercept = rep(quantile(coef.ref$bc.ref, 0.025), 2), color="darkblue", lty=2) +
+  geom_vline(xintercept = rep(quantile(coef.ref$bc.ref, 0.975), 2), color="darkblue", lty=2)
+plot.bc
+
+plot.latency <- ggplot(coef.ref, aes(x=doc.ref)) +
+  geom_histogram(color="grey", fill="grey") +
+  theme_classic() +
+  labs(x= "Coefficient value latency", y="Frequency") +
+  geom_vline(xintercept=observed.coefs$latency.obs, color="red") +
+  geom_vline(xintercept = rep(quantile(na.omit(coef.ref$doc.ref), 0.025), 2), color="darkblue", lty=2) +
+  geom_vline(xintercept = rep(quantile(na.omit(coef.ref$doc.ref), 0.975), 2), color="darkblue", lty=2)
+plot.latency
+
+plot.hr <- ggplot(coef.ref, aes(x=hr.ref)) +
+  geom_histogram(color="grey", fill="grey") +
+  theme_classic() +
+  labs(x= "Coefficient value HR", y="Frequency") +
+  geom_vline(xintercept=observed.coefs$hr50.obs, color="red") +
+  geom_vline(xintercept = rep(quantile(na.omit(coef.ref$hr.ref), 0.025), 2), color="darkblue", lty=2) +
+  geom_vline(xintercept = rep(quantile(na.omit(coef.ref$hr.ref), 0.975), 2), color="darkblue", lty=2) 
+plot.hr
+
+plot.sexXagd <- ggplot(coef.ref, aes(x=sexXagd.ref)) +
+  geom_histogram(color="grey", fill="grey") +
+  theme_classic() +
+  labs(x= "Coefficient value sex:AGD", y="Frequency") +
+  geom_vline(xintercept=observed.coefs$sexXagd.obs, color="red") +
+  geom_vline(xintercept = rep(quantile(na.omit(coef.ref$sexXagd.ref), 0.025), 2), color="darkblue", lty=2) +
+  geom_vline(xintercept = rep(quantile(na.omit(coef.ref$sexXagd.ref), 0.975), 2), color="darkblue", lty=2)
+plot.sexXagd
+
+```
+```{r}
+plot.hist.all <- ggpubr::ggarrange(plot.sex,  plot.agd, plot.sexXagd, 
+                  plot.bc,  plot.hr, plot.latency,
+                 labels="auto")
+plot.hist.all
+```
+
+The grey histogram is the distribution of the coefficients generated by the 1000 randomizations, the blue dashed lines the 2.5% and 97.5% quantiles of the reference coefficients and the ref line the observed coefficient. 
+
+
+## plots 
+
+
+### sex
+```{r sex}
+p_sex <- "P = 0.08"
+
+rank.sex23 <- ggplot(rankXchars_nona, aes(y=BordaScore, x=sex, color=sex)) +
+    geom_violin(width=0.5, color="black")+
+  geom_boxplot(width=0.2, color="grey", alpha=0.6) +
+  geom_jitter(  width=0.05) +
+  theme_classic() +
+  scale_y_reverse() +
+  scale_color_manual(values = c("F"='#5D3A9B', "M"="#E66100")) +
+  labs(y="Borda Score", x="Sex") +
+  theme(#axis.text = element_text(size=18),
+        #title = element_text(size=20),
+        legend.position = "none") +
+  geom_text(x=1.5, y=-7, label=p_sex, color="black", size=3)
+rank.sex23 
+
+ggsave("results/plot_rankXsex.jpeg", width=4, height = 3)
+
+
+# combined
+
+plot_sex23 <- ggpubr::ggarrange(rank.sex23, plot.sex)
+ggsave("results/plot_rankXsex.jpeg", width=5, height = 4)
+
+sum(observed.coefs$sex.obs<coef.ref$sex.ref)/length(coef.ref$sex.ref)
+```
+
+### AGD
+```{r}
+p_agd <- "P (agd) = 0.0"
+p_sexXagd = "P (sex:agd) = 1.0"
+
+rank.agd23 <- ggplot(rankXchars_nona, aes(y=BordaScore, x=meanagd, color=sex, group=sex)) +
+    #geom_violin(width=0.5, color="black")+
+  #geom_boxplot(width=0.2, color="grey", alpha=0.6) +
+  geom_jitter(  width=0.05) +
+  geom_smooth(method = "lm", fill = NA) +
+  theme_classic() +
+  scale_y_reverse() +
+  scale_color_manual( values = c("F"='#5D3A9B', "M"="#E66100")) + # values=alpha(c("#fdae61", "#0571b0"),1)) +
+  labs(y="Borda Score", x="Anogenital distance (mm)") +
+  theme(#axis.text = element_text(size=18),
+        #title = element_text(size=20),
+        legend.position = "none") +
+  geom_text(x=4, y=-6.5, label=p_agd, color="black", size=3) +
+   geom_text(x=4, y=-7.5, label=p_sexXagd, color="black", size=3)
+
+rank.agd23
+
+plot_p <- ggpubr::ggarrange(plot.agd, plot.sexXagd, ncol=1)
+
+plot_agd23 <- ggpubr::ggarrange(rank.agd23, plot_p, nrow=1)
+
+ggsave("results/plot_rankXagd_v1.jpeg", width=5, height = 4)
+```
+
+
+
+
+###body condition
+```{r body condition}
+p_bc = "P = 0.85"
+
+rank.bc23 <- ggplot(rankXchars_nona, aes(y=BordaScore, x=bodycondition)) +
+    #geom_violin(width=0.5, color="black")+
+  #geom_boxplot(width=0.2, color="grey", alpha=0.6) +
+  geom_jitter(  width=0.05) +
+  geom_smooth(method = "lm", fill = NA) +
+  theme_classic() +
+  scale_y_reverse() +
+ #scale_color_manual( values=alpha(c("#fdae61", "#0571b0"),1)) +
+  labs(y="Borda Score", x="Body condition (residuals)") +
+  theme(#axis.text = element_text(size=18),
+        #title = element_text(size=20),
+        legend.position = "none") +
+  geom_text(y=-6.5, x=-0.2, label=p_bc, color="black", size=3)
+  
+rank.bc23
+
+plot_bc23 <- ggpubr::ggarrange(rank.bc23, plot.bc)
+ggsave("results/plot_rankXbodycondition.jpeg", width=9, height = 4)
+
+p.bc <- 1-sum(observed.coefs$bc.obs<coef.ref$bc.ref)/length(coef.ref$bc.ref)
+```
+### latency to leave trap
+
+```{r }
+p_lat = "P = 0.26"
+
+rank.lat23 <- ggplot(rankXchars_nona, aes(y=BordaScore, x=mean_latency)) +
+    #geom_violin(width=0.5, color="black")+
+  #geom_boxplot(width=0.2, color="grey", alpha=0.6) +
+  geom_jitter(  width=0.05) +
+  geom_smooth(method = "lm", fill = NA) +
+  theme_classic() +
+  scale_y_reverse() +
+ #scale_color_manual( values=alpha(c("#fdae61", "#0571b0"),1)) +
+  labs(y="Borda Score", x="Latency to leave trap (s)") +
+  theme(#axis.text = element_text(size=18),
+        #title = element_text(size=20),
+        legend.position = "none") +
+  geom_text(x=1, y=-6.5, label=p_lat, color="black", size=3)
+
+rank.lat23
+
+plot_lat23 <- ggpubr::ggarrange(rank.lat23, plot.latency)
+```
+
+
+
+### home range
+```{r home range}
+
+p_hr <- "P = 0.99"
+
+rank.hr23 <- ggplot(rankXchars_nona, aes(y=BordaScore, x=hr50)) +
+  geom_point() +
+  theme_classic() +
+  scale_y_reverse() +
+  geom_smooth(method = "lm", fill = NA) +
+  labs(y="Borda Score", x="Core home range (50%)") +
+  theme(#axis.text = element_text(size=18),
+        #title = element_text(size=20),
+        legend.position = "none") +
+  geom_text(x=0.02, y=-6.5, label=p_hr, color="black", size=3)
+
+rank.hr23.r <- ggplot(rankXchars_nona, aes(y=bordareverse, x=hr50)) +
+  geom_point() +
+  theme_classic() +
+  #scale_y_reverse() +
+  geom_smooth(method = "lm", fill = NA) +
+  labs(y="Borda Score", x="Core home range (50%)") +
+  theme(#axis.text = element_text(size=18),
+        #title = element_text(size=20),
+        legend.position = "none") +
+  geom_text(x=0.02, y=-6.5, label=p_hr, color="black", size=3)
+rank.hr23
+rank.hr23.r
+
+ggpubr::ggarrange(rank.hr23, rank.hr23.r)
+
+plot_hr23 <- ggpubr::ggarrange(rank.hr23, plot.hr)
+#ggsave("results/plot_rankXbodycondition.jpeg", width=180, height = 150, units = "mm", dpi = 300)
+
+p.bc <- 1-sum(observed.coefs$bc.obs<coef.ref$bc.ref)/length(coef.ref$bc.ref)
+```
+
+
+## plot for manuscript
+
+Perhaps only show the significant factors and the comparison of these by key vs non-key?
+
+```{r}
+
+plot.rank.23 <- ggpubr::ggarrange(rank.sex23, rank.agd23, rank.bc23, rank.lat23, rank.hr23, 
+                  nrow=3, ncol=2,
+                   labels="auto"
+                   )
+plot.rank.23
+
+ggsave("../figures/plot_rankXchars23_v1.pdf",  width=180, height = 180, units = "mm", dpi = 300)
+```
+
+
+```{r}
+
+plot.rank.all23 <- ggpubr::ggarrange(plot_sex23, plot_agd23, plot_bc23, plot_lat23, plot_hr23, 
+                  nrow=5, ncol=1,
+                   labels="auto"
+                   )
+plot.rank.all23
+
+ggsave("../figures/plot_rankXchars23_hist.pdf",  width=180, height = 220, units = "mm", dpi = 300)
+```
+
+
+# save work
+
+```{r}
+save.image("../results/key_quantification_fall2023_v2.Rdata")
+
+
+load(("../results/key_quantification_fall2023_v2.Rdata"))
+```
+

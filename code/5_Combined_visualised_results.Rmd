@@ -1,0 +1,3442 @@
+---
+title: "Visualise results"
+author: "Annemarie"
+date: "2025-07-21"
+output: html_document
+---
+
+#load library
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(ggpubr)
+library(betareg)
+library(lme4)
+library(scales)  # for label_number()
+```
+
+# descriptive stats
+## Fig.1 Global network metrics
+
+```{r}
+# monolayer and multilayer networks
+freq.network_metrics23<- read.csv("../results/network_freqmetrics_fall23_93degus.csv")
+metricsmultilayer23 <- read.csv("../results/metricsmultilayer23.csv")
+freq.network_metrics24<- read.csv("../results/network_freqmetrics_fall24_108degus.csv") %>% 
+  mutate(year=2024)
+metricsmultilayer24 <- read.csv("../results/metricsmultilayer24.csv")
+
+metricsXyear <- bind_rows(freq.network_metrics23,
+                          freq.network_metrics24) %>% 
+  dplyr::select(year, network, diameter, density, avg_path_length, efficiency)
+
+multimetricsXyear <- bind_rows(metricsmultilayer23,
+                               metricsmultilayer24) %>% 
+  dplyr::select(year, network, diameter,density, m.apl, cluster, overlap) %>% 
+  rename(avg_path_length=m.apl)
+
+metricsXyear <- bind_rows(metricsXyear, 
+                          multimetricsXyear) 
+
+metricsXyear$year<- as.factor(metricsXyear$year)
+
+metricsXyear$network<- factor(metricsXyear$network,
+                              levels=c("proximity", "affiliative", "agonistic", "multilayer"))
+```
+
+```{r}
+metricssum <- metricsXyear %>% 
+  group_by(network) %>% 
+  summarise(across(where(is.numeric), list(mean = mean, sd = sd), na.rm = TRUE))
+
+```
+
+```{r}
+
+
+plot_metrics <- metricsXyear %>% 
+  pivot_longer(cols=3:8,
+               names_to = "metric", 
+               values_to = "values") 
+
+
+plot_diameter <- plot_metrics %>% 
+  filter(metric=="diameter") %>% 
+  ggplot( aes(x = network, y = values, fill = year)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  labs( y = "Diameter") +
+  theme_classic() +
+  scale_fill_manual(values=c("#1E88E5", "#004D40"))
+  #scale_fill_grey(start = 0.4,  end = 0.8)
+
+plot_density <- plot_metrics %>% 
+  filter(metric=="density") %>% 
+  ggplot( aes(x = network, y = values, fill = year)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  labs( y = "Density") +
+  theme_classic() +
+  scale_fill_manual(values=c("#1E88E5", "#004D40"))
+  #scale_fill_grey(start = 0.4,  end = 0.8)
+
+plot_apl <- plot_metrics %>% 
+  filter(metric=="avg_path_length") %>% 
+  ggplot( aes(x = network, y = values, fill = year)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  labs( y = "Average path length") +
+  theme_classic() +
+  scale_fill_manual(values=c("#1E88E5", "#004D40"))
+  #scale_fill_grey(start = 0.4,  end = 0.8)
+
+plot_eff <- plot_metrics %>% 
+  filter(metric=="efficiency") %>% 
+  ggplot( aes(x = network, y = values, fill = year)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  labs( y = "Efficiency") +
+  theme_classic() +
+  scale_fill_manual(values=c("#1E88E5", "#004D40"))
+  #scale_fill_grey(start = 0.4,  end = 0.8)
+
+plot_clus <- plot_metrics %>% 
+  filter(metric=="cluster") %>% 
+  ggplot( aes(x = network, y = values, fill = year)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  labs( y = "Clustering") +
+  theme_classic() +
+  scale_fill_manual(values=c("#1E88E5", "#004D40"))
+  #scale_fill_grey(start = 0.4,  end = 0.8)
+plot_clus
+
+plot_over <- plot_metrics %>% 
+  filter(metric=="overlap") %>% 
+  ggplot( aes(x = network, y = values, fill = year)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  labs( y = "Overlap") +
+  theme_classic() +
+  scale_fill_manual(values=c("#1E88E5", "#004D40"))
+  #scale_fill_grey(start = 0.4,  end = 0.8)
+plot_over
+
+
+ggpubr::ggarrange(plot_diameter + rremove('xlab'), plot_density + rremove('xlab') ,
+                  plot_apl , plot_eff, 
+                  #plot_clus, plot_over,
+                  common.legend = TRUE,legend="bottom",
+                  ncol = 2,
+                  nrow = 2)
+
+ggsave("../figures/globalnetworkmetrics_color.png", width = 7, height=5)
+```
+
+
+
+# Who is key?
+
+## comparison mono- and multilayer scores
+```{r monolayer network centralities}
+rankings23 <- read.csv("../results/bordaranking_scaled_fall23_93degus.csv")  
+rankings24 <- read.csv("../results/bordaranking_scaled_fall24_108degus.csv")
+
+degus_characteristics23 <- read.csv("../results/idcharacteristics23.csv")
+degus_characteristics24 <- read.csv("../results/idcharacteristics24_nogroup.csv")
+
+idranks23 <- rankings23 %>% 
+  left_join(select(degus_characteristics23, id, sex), by="id")
+
+idranks24 <- rankings24 %>% 
+  left_join(select(degus_characteristics24, id, sex), by="id")
+idranks24$sex[idranks24$id==6818] <- "F"
+
+```
+
+
+```{r plot 2023}
+df <- idranks23 %>% 
+  mutate(bordareverse=abs(BordaScore-max(BordaScore))
+         ) %>% 
+  select(id, sex, proximity, affiliative, agonistic, bordareverse) %>% 
+  pivot_longer(cols=3:6,
+               names_to = "Network",
+               values_to = "centrality")
+
+# Ensure IDs have consistent levels in the order they appear
+df$id <- factor(df$id, levels = unique(df$id))
+df$Network <- factor(df$Network, 
+                     levels = c("proximity", "affiliative", "agonistic", "bordareverse"),
+                     labels = c("proximity", "affiliative", "agonistic", "multilayer"))
+
+df <- df %>%
+  group_by(Network) %>%
+  mutate(NormScore = scales::rescale(centrality, to = c(0, 1))) %>%
+  ungroup()
+
+# Calculate network labels positions (same as before)
+network_labels <- data.frame(
+  Network = levels(df$Network),
+  x = 1:length(levels(df$Network)),
+  y = max(as.numeric(df$id)) + 3  # position outside heatmap circle
+)
+
+# Remove rotation: fixed 0 degree angle and centered alignment
+network_labels$angle <- 90
+network_labels$hjust <- 0.5
+
+# Plot circular heatmap with unrotated network labels
+p23 <- ggplot(df, aes(x = Network, y = id, fill = NormScore)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient(low = "white", high = "#1E88E5", name = "Centrality") +
+  coord_polar(theta = "y") +
+  geom_text(data = network_labels, 
+            aes(x = x, y = y, label = Network, angle = angle, hjust = hjust),
+            inherit.aes = FALSE, size = 2) + #, fontface = "bold"
+  theme_minimal() +
+  theme(
+    axis.title = element_blank(),
+    axis.text.y = element_blank(),  # hide individual IDs for clarity
+    axis.text.x = element_blank(),
+    axis.ticks = element_blank(),
+    panel.grid = element_blank(),
+    plot.title = element_text(hjust = 0.5),
+    legend.position = "right"
+  )
+
+p23
+
+```
+
+```{r plot 2024}
+df <- idranks24 %>% 
+  mutate(bordareverse=abs(BordaScore-max(BordaScore))) %>% 
+  select(id, sex, proximity, affiliative, agonistic, bordareverse) %>% 
+  pivot_longer(cols=3:6,
+               names_to = "Network",
+               values_to = "centrality")
+
+# Ensure IDs have consistent levels in the order they appear
+df$id <- factor(df$id, levels = unique(df$id))
+df$Network <- factor(df$Network, 
+                     levels = c("proximity", "affiliative", "agonistic", "bordareverse"),
+                     labels = c("proximity", "affiliative", "agonistic", "multilayer"))
+
+df <- df %>%
+  group_by(Network) %>%
+  mutate(NormScore = scales::rescale(centrality, to = c(0, 1))) %>%
+  ungroup()
+
+# Calculate network labels positions 
+network_labels <- data.frame(
+  Network = levels(df$Network),
+  x = 1:length(levels(df$Network)),
+  y = max(as.numeric(df$id)) + 3  # position outside heatmap circle
+)
+
+# Remove rotation: fixed 0 degree angle and centered alignment
+network_labels$angle <- 90
+network_labels$hjust <- 0.5
+
+# Plot circular heatmap with unrotated network labels
+p24 <- ggplot(df, aes(x = Network, y = id, fill = NormScore)) +
+  geom_tile(color = "white") +
+  scale_fill_gradient(low = "white", high = "#004D40", name = "Centrality") +
+  coord_polar(theta = "y") +
+  geom_text(data = network_labels, 
+            aes(x = x, y = y, label = Network, angle = angle, hjust = hjust),
+            inherit.aes = FALSE, size = 2) + #, fontface = "bold"
+  theme_minimal() +
+  theme(
+    axis.title = element_blank(),
+    axis.text.y = element_blank(),  # hide individual IDs for clarity
+    axis.text.x = element_blank(),
+    axis.ticks = element_blank(),
+    panel.grid = element_blank(),
+    plot.title = element_text(hjust = 0.5),
+    legend.position = "right"
+  ) #+
+  #labs(title = "Centrality scores 2024")
+
+print(p24)
+
+
+
+```
+```{r}
+ggpubr::ggarrange(p23, 
+                  p24, 
+                  ncol=1, 
+                  labels = "auto",
+                  common.legend = FALSE)
+
+ggsave("../figures/centrality_rankings.pdf",  width=90, height = 120, units = "mm", dpi = 300)
+```
+
+
+## Borda Score
+```{r multilayer network centrality}
+# identify key individuals
+load("./results/key_degus_fall2023.RData")
+load("../results/key_degus_fall2024.RData")
+
+ggpubr::ggarrange(plot_bordast_fall23 , 
+                  plot_bordast_fall24, 
+                  ncol=1, 
+                  labels = "auto",
+                  common.legend = TRUE)
+
+ggsave("../figures/bordascore_st_fall.pdf", width = 7, height=5)
+
+
+```
+## Key characteristics
+
+
+```{r}
+
+# characterize key individuals
+load("../results/key_quantification_fall2023_v1.Rdata")
+load("../results/key_quantification_fall2024_v1.RData")
+
+rankXchars_nona %>% 
+  group_by(sex) %>% 
+  tally()
+
+ggpubr::ggarrange(rank.agd23, rank.agd24,
+                  nrow=1, ncol=2,
+                  labels="auto"
+                   )
+
+ggsave("../figures/plot_rankXchars_v1.pdf",  width=180, height = 60, units = "mm", dpi = 300)
+```
+
+# Function 
+
+```{r}
+load("../results/key_roleXgroup_fall2023.Rdata")
+load("../results/key_roleXgroup_fall2024.Rdata")
+```
+
+## Sex ratio effect
+
+### females
+1.2 Females are more likely to be key in groups with multiple females than in groups with 0 or 1 female
+
+```{r}
+groupchars23$group <- as.factor(groupchars23$group)
+groupchars24$group <- as.factor(groupchars24$group)
+
+dff <- bind_rows(groupchars23, groupchars24) %>%
+  mutate(female_group = ifelse(F <= 1, "0 or 1 female", "multiple females"), 
+         female_key = ifelse(F_key=="yes", 1, 0))
+
+
+# Fisher's exact test (expected count is small)
+summary_dff <- dff %>%
+  group_by(F_key, female_group) %>%
+  tally() 
+
+my_table <- matrix(c(30, 22, 2, 5), nrow = 2, byrow = TRUE)
+rownames(my_table) <- c("no", "yes")
+colnames(my_table) <- c("0/1", ">1")
+my_table 
+
+fisher_result <- fisher.test(my_table)
+print(fisher_result)
+
+# binomial regression
+# 
+# m.males <- glm( male_key ~ M ,
+#                   data = dfm,
+#                   family = binomial
+#                   )
+# summary(m.males)
+
+m.Fcat <- glm( female_key ~ female_group,
+                  data = dff,
+                  family = binomial
+                  )
+summary(m.Fcat)
+
+exp(coef(m.Fcat))           # Exponentiated coefficients (odds ratios)
+exp(confint(m.Fcat))        # Confidence intervals for odds ratios
+
+
+m.F1 <- glm( female_key ~ 1 ,
+                  data = dff,
+                  family = binomial
+                  )
+summary(m.F1)
+
+lmtest::lrtest(m.Fcat, m.F1)
+
+
+plot_females <- ggplot(summary_dff, aes(x=female_group, y=n, fill=F_key)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  theme_classic() +
+  #scale_y_reverse() +
+  scale_fill_manual(values=alpha(c("#785EF0","#DC267F"),0.8)) + 
+  labs( x="Number of females in the group", y = "Count", title = "Females") +
+  theme(#axis.text = element_text(size=18),
+        #title = element_text(size=20),
+        legend.position = "right") 
+
+plot_females
+```
+
+
+### males
+
+2.2. Males are more likely to be key in groups with multiple males than in groups with 0 or 1 male
+```{r}
+groupchars23$group <- as.factor(groupchars23$group)
+groupchars24$group <- as.factor(groupchars24$group)
+
+dfm <- bind_rows(groupchars23, groupchars24) %>%
+  mutate(male_group = ifelse(M <= 1, "0 or 1 male", "multiple males"), 
+         male_key = ifelse(M_key=="yes", 1, 0))
+
+
+# Fisher's exact test (expected count is small)
+summary_df <- dfm %>%
+  group_by(is_key, male_group) %>%
+  tally() 
+
+my_table <- matrix(c(25, 12, 9, 13), nrow = 2, byrow = TRUE)
+rownames(my_table) <- c("no", "yes")
+colnames(my_table) <- c("0/1", ">1")
+my_table 
+
+fisher_result <- fisher.test(my_table)
+print(fisher_result)
+
+# binomial regression
+# 
+# m.males <- glm( male_key ~ M ,
+#                   data = dfm,
+#                   family = binomial
+#                   )
+# summary(m.males)
+
+m.malescat <- glm( male_key ~ male_group,
+                  data = dfm,
+                  family = binomial
+                  )
+summary(m.malescat)
+
+exp(coef(m.malescat))           # Exponentiated coefficients (odds ratios)
+exp(confint(m.malescat))        # Confidence intervals for odds ratios
+
+
+m.males1 <- glm( male_key ~ 1 ,
+                  data = dfm,
+                  family = binomial
+                  )
+summary(m.males1)
+
+
+
+performance::model_performance(m.males, m.malescat, m.males1)
+
+lmtest::lrtest(m.males, m.males1)
+lmtest::lrtest(m.malescat, m.males1)
+
+```
+We did not find an association between whether a male is key and number of males in the group (Fisher exact test: odds ratio = 2.95, p = 0.06)
+
+
+```{r}
+
+plot_males <- ggplot(summary_df, aes(x=male_group, y=n, fill=is_key)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  theme_classic() +
+  #scale_y_reverse() +
+  scale_fill_manual(values=alpha(c("#785EF0","#DC267F"),0.8)) + 
+  labs( x="Number of males in the group", y = "Count", title = "Males") +
+  theme(#axis.text = element_text(size=18),
+        #title = element_text(size=20),
+        legend.position = "right") 
+
+summary_df1 <- dfm %>%
+  group_by(is_key, M) %>%
+  tally()
+
+ggplot(dfm, aes(x=M, fill=is_key)) +
+  geom_histogram() +  #geom_bar(stat = "identity", position = position_dodge())
+  theme_classic() +
+  #scale_y_reverse() +
+  scale_fill_manual(values = c( "yes"="#E66100", "no"='#5D3A9B')) +
+  labs( x="Number of males in the group") +
+  theme(#axis.text = element_text(size=18),
+        #title = element_text(size=20),
+        legend.position = "right") 
+
+
+ggplot(summary_df1, aes(x=M, y= n, fill=is_key)) +
+  geom_bar(stat = "identity", position = position_dodge()) +
+  theme_classic() +
+  #scale_y_reverse() +
+  scale_fill_manual(values = c( "yes"="#E66100", "no"='#5D3A9B')) +
+  labs( x="Number of males in the group") +
+  theme(#axis.text = element_text(size=18),
+        #title = element_text(size=20),
+        legend.position = "right") 
+```
+### combined
+
+```{r}
+
+ggarrange(plot_females, plot_males,
+          nrow=1, ncol=2,
+          labels="auto", common.legend =T  
+                   )
+
+ggsave("../figures/plot_sexXgroup.pdf",  width=180, height = 60, units = "mm", dpi = 300)
+```
+
+## Network metrics by sex
+
+
+H1/2.3 network metrics by sex in groups with key IDs
+1.3 More cohesive and efficient social groups when females are key
+2.3. Less cohesive and efficient social groups when males are key
+
+```{r}
+metricsXkey.sex23 <- read.csv("../results/networkmetricsXgroupXsex_fall23.csv") %>% 
+  mutate(year="2023") %>% 
+  group_by(network, group) %>% 
+  slice(1)
+metricsXkey.sex24 <- read.csv("../results/networkmetricsXgroupXsex_fall24.csv") %>% 
+  group_by(network, group) %>% 
+  slice(1)
+
+```
+we have 2 groups in 2024 with 2 key individuals of different sexes. so use groupID as random factor
+
+```{r}
+head(metricsXkey.sex24)
+head(metricsXkey.sex23)
+
+metricsXkey.sex23$year <- as.integer(metricsXkey.sex23$year)
+
+metricsXkey.sex <- bind_rows(metricsXkey.sex23, metricsXkey.sex24) %>% 
+  mutate(groupID = paste(group, year, sep = "_")) 
+  
+
+sum.metricsXkey.sex <- metricsXkey.sex %>% 
+  filter(network=="proximity") %>% 
+  group_by(sex) %>% 
+  tally()
+
+metricsXkey.sex %>% 
+  filter(network=="proximity") %>% 
+  distinct(groupID)
+```
+
+
+
+
+### observed proximity
+```{r proximity}
+
+proxXkey <- metricsXkey.sex %>% 
+  filter(network=="proximity")  
+  
+
+ref.data <- proxXkey 
+
+```
+
+```{r number of associations}
+
+range(proxXkey$count)
+
+# normally distributed?
+ggplot(proxXkey, aes(x=count)) +  # BordaScore, bordarankreverse, bordareverse
+  geom_histogram()  # very right skewed
+
+
+
+# shapiro test p >0.05, data normally distributed
+#ggqqplot(trap, "time_s")
+shapiro.test(proxXkey$count)
+
+
+m <- lm(count ~ sex, data = ref.data)
+summary(m)
+d <- data.frame(residuals = residuals(m),         # Residuals
+                std_residuals = stats::rstudent(m), # Studentized Residuals
+                fitted = fitted(m),          # Fitted values
+                cooks = cooks.distance(m))   # Cook's D
+d <- mutate(d, observation = 1:nrow(d))           # Observation number
+
+# histogram of residuals
+ggplot(data = d, aes(x = std_residuals)) +
+  geom_histogram(bins = 10)
+
+# Check for Normality: QQ Normality plot of residuals
+ggplot(data = d, aes(sample = std_residuals)) +
+  stat_qq() +
+  stat_qq_line()
+
+# Check heteroscedasticity or constant variance
+ggplot(d, aes(x = fitted, y = std_residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0)
+
+# Cook's D
+ggplot(d, aes(x = observation, y = cooks)) +
+  geom_point() +
+  geom_hline(yintercept = 1, linetype = "dotted") +
+  geom_hline(yintercept = 4/nrow(d), linetype = "dashed")
+# outliers
+d_outliers <- filter(d, cooks > 4/nrow(d))  # observation 258 (time_s =14.6)
+
+# distribution
+fitdistrplus::plotdist(proxXkey$count)
+fitdistrplus::descdist(proxXkey$count, discrete = T) # normal distribution
+
+
+ggplot(proxXkey, aes(x=sex, y=count)) +
+  geom_boxplot() +
+  theme_classic()
+
+
+wilcox.test(count~sex, data=ref.data)
+
+# Calculate effects
+count.obs <- coefficients(glmer(count ~ sex + 1|groupID, data = ref.data, family = poisson))[2]
+summary(glmer(count ~ sex + 1|groupID, data = ref.data, family = poisson))
+
+count.obs <- coefficients(glm(count ~ sex, data = ref.data, family = poisson))[2]
+
+summary(glm(count ~ sex, data = ref.data, family = poisson))
+
+```
+
+
+```{r connectivity}
+
+range(proxXkey$diameter)
+
+# normally distributed?
+ggplot(proxXkey, aes(x=diameter)) +  # BordaScore, bordarankreverse, bordareverse
+  geom_histogram()  # very right skewed
+
+
+# shapiro test p >0.05, data normally distributed
+#ggqqplot(trap, "time_s")
+shapiro.test(proxXkey$diameter)
+
+
+m <- lm(diameter ~ sex, data = ref.data)
+summary(m)
+d <- data.frame(residuals = residuals(m),         # Residuals
+                std_residuals = stats::rstudent(m), # Studentized Residuals
+                fitted = fitted(m),          # Fitted values
+                cooks = cooks.distance(m))   # Cook's D
+d <- mutate(d, observation = 1:nrow(d))           # Observation number
+
+# histogram of residuals
+ggplot(data = d, aes(x = std_residuals)) +
+  geom_histogram(bins = 10)
+
+# Check for Normality: QQ Normality plot of residuals
+ggplot(data = d, aes(sample = std_residuals)) +
+  stat_qq() +
+  stat_qq_line()
+
+# Check heteroscedasticity or constant variance
+ggplot(d, aes(x = fitted, y = std_residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0)
+
+# Cook's D
+ggplot(d, aes(x = observation, y = cooks)) +
+  geom_point() +
+  geom_hline(yintercept = 1, linetype = "dotted") +
+  geom_hline(yintercept = 4/nrow(d), linetype = "dashed")
+# outliers
+d_outliers <- filter(d, cooks > 4/nrow(d))  # observation 258 (time_s =14.6)
+
+# distribution
+fitdistrplus::plotdist(proxXkey$diameter)
+fitdistrplus::descdist(proxXkey$diameter, discrete = F) # normal distribution
+
+
+ggplot(proxXkey, aes(x=sex, y=diameter)) +
+  geom_boxplot() +
+  theme_classic()
+
+
+wilcox.test(diameter~sex, data=ref.data)
+
+# Calculate effects
+diameter.obs <- coefficients(lm(diameter ~ sex, data = ref.data))[2]
+
+
+
+```
+
+
+
+
+``` {r density}
+
+####### density  #####
+
+range(proxXkey$density)
+
+# normally distributed?
+ggplot(proxXkey, aes(x=density)) +  # BordaScore, bordarankreverse, bordareverse
+  geom_histogram()  # very right skewed
+
+# shapiro test p >0.05, data normally distributed
+#ggqqplot(trap, "time_s")
+shapiro.test(proxXkey$density)
+
+
+m <- lm(density ~ sex, data = proxXkey)
+summary(m)
+d <- data.frame(residuals = residuals(m),         # Residuals
+                std_residuals = stats::rstudent(m), # Studentized Residuals
+                fitted = fitted(m),          # Fitted values
+                cooks = cooks.distance(m))   # Cook's D
+d <- mutate(d, observation = 1:nrow(d))           # Observation number
+
+# histogram of residuals
+ggplot(data = d, aes(x = std_residuals)) +
+  geom_histogram(bins = 10)
+
+# Check for Normality: QQ Normality plot of residuals
+ggplot(data = d, aes(sample = std_residuals)) +
+  stat_qq() +
+  stat_qq_line()
+
+# Check heteroscedasticity or constant variance
+ggplot(d, aes(x = fitted, y = std_residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0)
+
+# Cook's D
+ggplot(d, aes(x = observation, y = cooks)) +
+  geom_point() +
+  geom_hline(yintercept = 1, linetype = "dotted") +
+  geom_hline(yintercept = 4/nrow(d), linetype = "dashed")
+# outliers
+d_outliers <- filter(d, cooks > 4/nrow(d))  # observation 258 (time_s =14.6)
+
+# distribution
+fitdistrplus::plotdist(proxXkey$density)
+fitdistrplus::descdist(proxXkey$density, discrete = F) # beta distribution
+
+ggplot(proxXkey, aes(x=sex, y=density)) +
+  geom_boxplot() +
+  theme_classic()
+
+# Calculate effects
+proxXkey$density[proxXkey$density==1.0]<-0.9999
+
+
+density.obs <- coefficients(betareg(density ~ sex, data = proxXkey))[2]
+summary(betareg(density ~ sex, data = proxXkey))
+```
+
+```{r information transfer}
+
+###### average path length ######
+ref.data <- proxXkey #%>% 
+  #filter(avg_path_length<1)
+
+range(ref.data$avg_path_length, na.rm=T)
+
+# normally distributed?
+ggplot(ref.data, aes(x=avg_path_length)) +
+  geom_histogram()  # very right skewed
+
+  # shapiro test p >0.05, data normally distributed
+#ggqqplot(trap, "time_s")
+shapiro.test(ref.data$avg_path_length)
+
+
+m <- lm(avg_path_length ~ sex, data = ref.data)
+#m<- glm(avg_path_length ~ withkey, data = ref.data, family=Gamma("inverse"))
+summary(m)
+d <- data.frame(residuals = residuals(m),         # Residuals
+                std_residuals = stats::rstudent(m), # Studentized Residuals
+                fitted = fitted(m),          # Fitted values
+                cooks = cooks.distance(m))   # Cook's D
+d <- mutate(d, observation = 1:nrow(d))           # Observation number
+
+# histogram of residuals
+ggplot(data = d, aes(x = std_residuals)) +
+  geom_histogram(bins = 10)
+
+# Check for Normality: QQ Normality plot of residuals
+ggplot(data = d, aes(sample = std_residuals)) +
+  stat_qq() +
+  stat_qq_line()
+
+# Check heteroscedasticity or constant variance
+ggplot(d, aes(x = fitted, y = std_residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0)
+
+# Cook's D
+ggplot(d, aes(x = observation, y = cooks)) +
+  geom_point() +
+  geom_hline(yintercept = 1, linetype = "dotted") +
+  geom_hline(yintercept = 4/nrow(d), linetype = "dashed")
+# outliers
+d_outliers <- filter(d, cooks > 4/nrow(d))  # observation 258 (time_s =14.6)
+
+# distribution
+fitdistrplus::plotdist(proxXkey$avg_path_length)
+#fitdistrplus::descdist(ref.data$avg_path_length, discrete = F) # beta distribution
+
+ggplot(ref.data, aes(x=sex, y=avg_path_length)) +
+  geom_boxplot() +
+  theme_classic()
+
+
+m1<- glm(avg_path_length ~ sex, data = ref.data, family=Gamma("inverse"))
+m2 <- lm(avg_path_length ~ sex, data = ref.data)
+
+performance::compare_performance(m1,m2, rank = TRUE, verbose = FALSE)
+performance::check_model(m1)
+performance::check_model(m2)
+
+
+avg_path_length.obs.gam <- coefficients(glm(avg_path_length ~ sex, data = proxXkey, family=Gamma("inverse")))[2]
+
+avg_path_length.obs <- coefficients(lm(avg_path_length ~ sex, data = proxXkey))[2]
+
+```
+
+```{r efficiency}
+
+
+##### efficiency #####
+range(ref.data$efficiency, na.rm=T)
+
+# normally distributed?
+ggplot(ref.data, aes(x=efficiency)) +
+  geom_histogram()  # very right skewed
+
+# shapiro test p >0.05, data normally distributed
+#ggqqplot(trap, "time_s")
+shapiro.test(ref.data$efficiency)
+
+
+m <- lm(efficiency ~ sex, data = ref.data)
+#m<- glm(efficiency~ group_with_key, data = ref.data, family=Gamma("inverse"))
+summary(m)
+d <- data.frame(residuals = residuals(m),         # Residuals
+                std_residuals = stats::rstudent(m), # Studentized Residuals
+                fitted = fitted(m),          # Fitted values
+                cooks = cooks.distance(m))   # Cook's D
+d <- mutate(d, observation = 1:nrow(d))           # Observation number
+
+# histogram of residuals
+ggplot(data = d, aes(x = std_residuals)) +
+  geom_histogram(bins = 10)
+
+# Check for Normality: QQ Normality plot of residuals
+ggplot(data = d, aes(sample = std_residuals)) +
+  stat_qq() +
+  stat_qq_line()
+
+# Check heteroscedasticity or constant variance
+ggplot(d, aes(x = fitted, y = std_residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0)
+
+# Cook's D
+ggplot(d, aes(x = observation, y = cooks)) +
+  geom_point() +
+  geom_hline(yintercept = 1, linetype = "dotted") +
+  geom_hline(yintercept = 4/nrow(d), linetype = "dashed")
+# outliers
+d_outliers <- filter(d, cooks > 4/nrow(d))  # observation 258 (time_s =14.6)
+
+# distribution
+  fitdistrplus::plotdist(ref.data$efficiency)
+fitdistrplus::descdist(ref.data$efficiency, discrete = F)
+
+
+# Calculate effects
+ref.data$efficiency[ref.data$efficiency==0.0]<-0.0001
+ref.data$efficiency[ref.data$efficiency==1.0]<-0.9999
+
+efficiency.obs <- coefficients(betareg(efficiency ~ sex, data = ref.data))[2]
+
+
+ggplot(ref.data, aes(x=sex, y=efficiency)) +
+  geom_boxplot() +
+  theme_classic()
+
+#kruskal.test(proxXkey$efficiency~proxXkey$withkey)
+wilcox.test(efficiency~sex, data=ref.data)
+```
+
+
+
+```{r}
+
+# combine coeffs
+network <- "proximity"
+prox.obs<- cbind.data.frame(network, count.obs, diameter.obs,density.obs, avg_path_length.obs, efficiency.obs)
+```
+
+
+in proximity networks, we found no difference in network metrics between groups with and groups without key individuals 
+
+
+
+
+
+
+### observed affiliative
+```{r observed affiliative }
+
+
+ref.data <- metricsXkey.sex %>% 
+  filter(network=="affiliative") 
+
+
+```
+
+```{r number of associations}
+
+range(ref.data$count)
+
+# normally distributed?
+ggplot(ref.data, aes(x=count)) +  # BordaScore, bordarankreverse, bordareverse
+  geom_histogram()  # very right skewed
+
+
+# shapiro test p >0.05, data normally distributed
+#ggqqplot(trap, "time_s")
+shapiro.test(ref.data$count)
+
+
+m <- lm(count ~ group_with_key, data = ref.data)
+summary(m)
+d <- data.frame(residuals = residuals(m),         # Residuals
+                std_residuals = stats::rstudent(m), # Studentized Residuals
+                fitted = fitted(m),          # Fitted values
+                cooks = cooks.distance(m))   # Cook's D
+d <- mutate(d, observation = 1:nrow(d))           # Observation number
+
+# histogram of residuals
+ggplot(data = d, aes(x = std_residuals)) +
+  geom_histogram(bins = 10)
+
+# Check for Normality: QQ Normality plot of residuals
+ggplot(data = d, aes(sample = std_residuals)) +
+  stat_qq() +
+  stat_qq_line()
+
+# Check heteroscedasticity or constant variance
+ggplot(d, aes(x = fitted, y = std_residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0)
+
+# Cook's D
+ggplot(d, aes(x = observation, y = cooks)) +
+  geom_point() +
+  geom_hline(yintercept = 1, linetype = "dotted") +
+  geom_hline(yintercept = 4/nrow(d), linetype = "dashed")
+# outliers
+d_outliers <- filter(d, cooks > 4/nrow(d))  # observation 258 (time_s =14.6)
+
+# distribution
+fitdistrplus::plotdist(ref.data$count)
+fitdistrplus::descdist(ref.data$count, discrete = T) # normal distribution
+
+
+ggplot(ref.data, aes(x=sex, y=count)) +
+  geom_boxplot() +
+  theme_classic()
+
+
+wilcox.test(count~sex, data=ref.data)
+
+# Calculate effects
+count.obs <- coefficients(glm(count ~ sex, data = ref.data, family = poisson))[2]
+
+
+```
+
+```{r connectivity}
+###### connectivity
+
+range(ref.data$diameter)
+
+# normally distributed?
+ggplot(ref.data, aes(x=diameter)) +  # BordaScore, bordarankreverse, bordareverse
+  geom_histogram()  # very right skewed
+
+# shapiro test p >0.05, data normally distributed
+#ggqqplot(trap, "time_s")
+shapiro.test(ref.data$diameter)
+
+
+m <- lm(diameter ~ group_with_key, data = ref.data)
+summary(m)
+d <- data.frame(residuals = residuals(m),         # Residuals
+                std_residuals = stats::rstudent(m), # Studentized Residuals
+                fitted = fitted(m),          # Fitted values
+                cooks = cooks.distance(m))   # Cook's D
+d <- mutate(d, observation = 1:nrow(d))           # Observation number
+
+# histogram of residuals
+ggplot(data = d, aes(x = std_residuals)) +
+  geom_histogram(bins = 10)
+
+# Check for Normality: QQ Normality plot of residuals
+ggplot(data = d, aes(sample = std_residuals)) +
+  stat_qq() +
+  stat_qq_line()
+
+# Check heteroscedasticity or constant variance
+ggplot(d, aes(x = fitted, y = std_residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0)
+
+# Cook's D
+ggplot(d, aes(x = observation, y = cooks)) +
+  geom_point() +
+  geom_hline(yintercept = 1, linetype = "dotted") +
+  geom_hline(yintercept = 4/nrow(d), linetype = "dashed")
+# outliers
+d_outliers <- filter(d, cooks > 4/nrow(d))  # observation 258 (time_s =14.6)
+
+# distribution
+fitdistrplus::plotdist(ref.data$diameter)
+fitdistrplus::descdist(ref.data$diameter, discrete = F) # beta distribution
+
+
+ggplot(ref.data, aes(x=sex, y=diameter)) +
+  geom_boxplot() +
+  theme_classic()
+
+#kruskal.test(proxXkey$diameter, proxXkey$withkey)
+wilcox.test(diameter~group_with_key, data=ref.data)
+# Calculate effects
+diameter.obs <- coefficients(lm(diameter ~ sex, data = ref.data))[2]
+
+```
+
+```{r}
+####### density  #####
+
+range(ref.data$density)
+
+# normally distributed?
+ggplot(ref.data, aes(x=density)) +  # BordaScore, bordarankreverse, bordareverse
+  geom_histogram()  # very right skewed
+
+# shapiro test p >0.05, data normally distributed
+#ggqqplot(trap, "time_s")
+shapiro.test(ref.data$density)
+
+
+m <- lm(density ~ group_with_key, data = ref.data)
+summary(m)
+d <- data.frame(residuals = residuals(m),         # Residuals
+                std_residuals = stats::rstudent(m), # Studentized Residuals
+                fitted = fitted(m),          # Fitted values
+                cooks = cooks.distance(m))   # Cook's D
+d <- mutate(d, observation = 1:nrow(d))           # Observation number
+
+# histogram of residuals
+ggplot(data = d, aes(x = std_residuals)) +
+  geom_histogram(bins = 10)
+
+# Check for Normality: QQ Normality plot of residuals
+ggplot(data = d, aes(sample = std_residuals)) +
+  stat_qq() +
+  stat_qq_line()
+
+# Check heteroscedasticity or constant variance
+ggplot(d, aes(x = fitted, y = std_residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0)
+
+# Cook's D
+ggplot(d, aes(x = observation, y = cooks)) +
+  geom_point() +
+  geom_hline(yintercept = 1, linetype = "dotted") +
+  geom_hline(yintercept = 4/nrow(d), linetype = "dashed")
+# outliers
+d_outliers <- filter(d, cooks > 4/nrow(d))  # observation 258 (time_s =14.6)
+
+# distribution
+fitdistrplus::plotdist(ref.data$density)
+fitdistrplus::descdist(ref.data$density, discrete = F) # beta distribution
+
+ggplot(ref.data, aes(x=sex, y=density)) +
+  geom_boxplot() +
+  theme_classic()
+
+#kruskal.test(proxXkey$density, proxXkey$withkey)
+wilcox.test(density~sex, data=ref.data)
+
+# Calculate effects
+ref.data$density[ref.data$density==0.0]<-0.0001
+ref.data$density[ref.data$density==1.0]<-0.9999
+
+density.obs <- coefficients(betareg(density ~ sex, data = ref.data))[2]
+
+
+
+```
+
+
+```{r}
+
+
+
+## information transfer
+###### average path length ######
+ref.data <- ref.data %>% 
+  filter(avg_path_length<0.3)
+
+range(ref.data$avg_path_length, na.rm=T)
+
+# normally distributed?
+ggplot(ref.data, aes(x=avg_path_length)) +
+  geom_histogram()  # very right skewed
+
+  # shapiro test p >0.05, data normally distributed
+#ggqqplot(trap, "time_s")
+shapiro.test(ref.data$avg_path_length)
+
+
+m<- glm(avg_path_length ~ sex, data = ref.data, family=Gamma("inverse"))
+summary(m)
+d <- data.frame(residuals = residuals(m),         # Residuals
+                std_residuals = stats::rstudent(m), # Studentized Residuals
+                fitted = fitted(m),          # Fitted values
+                cooks = cooks.distance(m))   # Cook's D
+d <- mutate(d, observation = 1:nrow(d))           # Observation number
+
+# histogram of residuals
+ggplot(data = d, aes(x = std_residuals)) +
+  geom_histogram(bins = 10)
+
+# Check for Normality: QQ Normality plot of residuals
+ggplot(data = d, aes(sample = std_residuals)) +
+  stat_qq() +
+  stat_qq_line()
+
+# Check heteroscedasticity or constant variance
+ggplot(d, aes(x = fitted, y = std_residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0)
+
+# Cook's D
+ggplot(d, aes(x = observation, y = cooks)) +
+  geom_point() +
+  geom_hline(yintercept = 1, linetype = "dotted") +
+  geom_hline(yintercept = 4/nrow(d), linetype = "dashed")
+# outliers
+d_outliers <- filter(d, cooks > 4/nrow(d))  # observation 258 (time_s =14.6)
+
+# distribution
+fitdistrplus::plotdist(ref.data$avg_path_length)
+fitdistrplus::descdist(ref.data$avg_path_length, discrete = F) # beta distribution
+
+ggplot(ref.data, aes(x=sex, y=avg_path_length)) +
+  geom_boxplot() +
+  theme_classic()
+
+
+avg_path_length.obs <- coefficients(lm(avg_path_length ~ sex, data = ref.data))[2]
+
+
+```
+
+```{r}
+
+ref.data <- metricsXkey.sex %>% 
+  filter(network=="affiliative") 
+
+##### efficiency #####
+range(ref.data$efficiency, na.rm=T)
+
+# normally distributed?
+ggplot(ref.data, aes(x=efficiency)) +
+  geom_histogram()  # very right skewed
+
+# shapiro test p >0.05, data normally distributed
+#ggqqplot(trap, "time_s")
+shapiro.test(ref.data$efficiency)
+
+
+m <- lm(efficiency ~ sex, data = ref.data)
+#m<- glm(efficiency~ withkey, data = ref.data, family=Gamma("inverse"))
+summary(m)
+d <- data.frame(residuals = residuals(m),         # Residuals
+                std_residuals = stats::rstudent(m), # Studentized Residuals
+                fitted = fitted(m),          # Fitted values
+                cooks = cooks.distance(m))   # Cook's D
+d <- mutate(d, observation = 1:nrow(d))           # Observation number
+
+# histogram of residuals
+ggplot(data = d, aes(x = std_residuals)) +
+  geom_histogram(bins = 10)
+
+# Check for Normality: QQ Normality plot of residuals
+ggplot(data = d, aes(sample = std_residuals)) +
+  stat_qq() +
+  stat_qq_line()
+
+# Check heteroscedasticity or constant variance
+ggplot(d, aes(x = fitted, y = std_residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0)
+
+# Cook's D
+ggplot(d, aes(x = observation, y = cooks)) +
+  geom_point() +
+  geom_hline(yintercept = 1, linetype = "dotted") +
+  geom_hline(yintercept = 4/nrow(d), linetype = "dashed")
+# outliers
+d_outliers <- filter(d, cooks > 4/nrow(d))  # observation 258 (time_s =14.6)
+
+# distribution
+  fitdistrplus::plotdist(ref.data$efficiency)
+fitdistrplus::descdist(ref.data$efficiency, discrete = F)
+
+
+# Calculate effects
+ref.data$efficiency[ref.data$efficiency==0.0]<-0.0001
+ref.data$efficiency[ref.data$efficiency==1.0]<-0.9999
+
+efficiency.obs <- coefficients(betareg(efficiency ~ sex, data = ref.data))[2]
+
+ggplot(ref.data, aes(x=sex, y=efficiency)) +
+  geom_boxplot() +
+  theme_classic()
+
+#kruskal.test(proxXkey$efficiency~proxXkey$withkey)
+wilcox.test(efficiency~sex, data=ref.data)
+
+
+```
+
+```{r}
+
+## combine observed coefficients
+network <- "affiliative"
+aff.obs<- cbind.data.frame(network, count.obs, diameter.obs,density.obs, avg_path_length.obs, efficiency.obs)
+
+```
+
+
+
+### observed agonistic
+```{r}
+
+ref.data <- metricsXkey.sex %>% 
+  filter(network=="agonistic") 
+
+```
+
+```{r number of associations}
+
+range(ref.data$count)
+
+# normally distributed?
+ggplot(ref.data, aes(x=count)) +  # BordaScore, bordarankreverse, bordareverse
+  geom_histogram()  # very right skewed
+
+
+# shapiro test p >0.05, data normally distributed
+#ggqqplot(trap, "time_s")
+shapiro.test(ref.data$count)
+
+
+m <- lm(count ~ group_with_key, data = ref.data)
+summary(m)
+d <- data.frame(residuals = residuals(m),         # Residuals
+                std_residuals = stats::rstudent(m), # Studentized Residuals
+                fitted = fitted(m),          # Fitted values
+                cooks = cooks.distance(m))   # Cook's D
+d <- mutate(d, observation = 1:nrow(d))           # Observation number
+
+# histogram of residuals
+ggplot(data = d, aes(x = std_residuals)) +
+  geom_histogram(bins = 10)
+
+# Check for Normality: QQ Normality plot of residuals
+ggplot(data = d, aes(sample = std_residuals)) +
+  stat_qq() +
+  stat_qq_line()
+
+# Check heteroscedasticity or constant variance
+ggplot(d, aes(x = fitted, y = std_residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0)
+
+# Cook's D
+ggplot(d, aes(x = observation, y = cooks)) +
+  geom_point() +
+  geom_hline(yintercept = 1, linetype = "dotted") +
+  geom_hline(yintercept = 4/nrow(d), linetype = "dashed")
+# outliers
+d_outliers <- filter(d, cooks > 4/nrow(d))  # observation 258 (time_s =14.6)
+
+# distribution
+fitdistrplus::plotdist(ref.data$count)
+fitdistrplus::descdist(ref.data$count, discrete = T) # normal distribution
+
+
+ggplot(ref.data, aes(x=sex, y=count)) +
+  geom_boxplot() +
+  theme_classic()
+
+# Calculate effects
+count.obs <- coefficients(glm(count ~ sex, data = ref.data, family = poisson))[2]
+
+
+```
+
+
+```{r connectivity}
+
+###### connectivity
+
+range(ref.data$diameter)
+
+# normally distributed?
+ggplot(ref.data, aes(x=diameter)) +  # BordaScore, bordarankreverse, bordareverse
+  geom_histogram()  # very right skewed
+
+# shapiro test p >0.05, data normally distributed
+#ggqqplot(trap, "time_s")
+shapiro.test(ref.data$diameter)
+
+
+m <- lm(diameter ~ sex, data = ref.data)
+summary(m)
+d <- data.frame(residuals = residuals(m),         # Residuals
+                std_residuals = stats::rstudent(m), # Studentized Residuals
+                fitted = fitted(m),          # Fitted values
+                cooks = cooks.distance(m))   # Cook's D
+d <- mutate(d, observation = 1:nrow(d))           # Observation number
+
+# histogram of residuals
+ggplot(data = d, aes(x = std_residuals)) +
+  geom_histogram(bins = 10)
+
+# Check for Normality: QQ Normality plot of residuals
+ggplot(data = d, aes(sample = std_residuals)) +
+  stat_qq() +
+  stat_qq_line()
+
+# Check heteroscedasticity or constant variance
+ggplot(d, aes(x = fitted, y = std_residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0)
+
+# Cook's D
+ggplot(d, aes(x = observation, y = cooks)) +
+  geom_point() +
+  geom_hline(yintercept = 1, linetype = "dotted") +
+  geom_hline(yintercept = 4/nrow(d), linetype = "dashed")
+# outliers
+d_outliers <- filter(d, cooks > 4/nrow(d))  # observation 258 (time_s =14.6)
+
+# distribution
+fitdistrplus::plotdist(ref.data$diameter)
+fitdistrplus::descdist(ref.data$diameter, discrete = F) # beta distribution
+
+
+ggplot(ref.data, aes(x=sex, y=diameter)) +
+  geom_boxplot() +
+  theme_classic()
+
+#kruskal.test(proxXkey$diameter, proxXkey$withkey)
+wilcox.test(diameter~sex, data=ref.data)
+# Calculate effects
+diameter.obs <- coefficients(lm(diameter ~ sex, data = ref.data))[2]
+
+
+```
+
+```{r density}
+
+
+####### density  #####
+
+range(ref.data$density)
+
+
+# normally distributed?
+ggplot(ref.data, aes(x=density)) +  # BordaScore, bordarankreverse, bordareverse
+  geom_histogram()  # very right skewed
+
+# shapiro test p >0.05, data normally distributed
+#ggqqplot(trap, "time_s")
+shapiro.test(ref.data$density)
+
+
+m <- lm(density ~ sex, data = ref.data)
+summary(m)
+d <- data.frame(residuals = residuals(m),         # Residuals
+                std_residuals = stats::rstudent(m), # Studentized Residuals
+                fitted = fitted(m),          # Fitted values
+                cooks = cooks.distance(m))   # Cook's D
+d <- mutate(d, observation = 1:nrow(d))           # Observation number
+
+# histogram of residuals
+ggplot(data = d, aes(x = std_residuals)) +
+  geom_histogram(bins = 10)
+
+# Check for Normality: QQ Normality plot of residuals
+ggplot(data = d, aes(sample = std_residuals)) +
+  stat_qq() +
+  stat_qq_line()
+
+# Check heteroscedasticity or constant variance
+ggplot(d, aes(x = fitted, y = std_residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0)
+
+# Cook's D
+ggplot(d, aes(x = observation, y = cooks)) +
+  geom_point() +
+  geom_hline(yintercept = 1, linetype = "dotted") +
+  geom_hline(yintercept = 4/nrow(d), linetype = "dashed")
+# outliers
+d_outliers <- filter(d, cooks > 4/nrow(d))  # observation 258 (time_s =14.6)
+
+# distribution
+fitdistrplus::plotdist(ref.data$density)
+fitdistrplus::descdist(ref.data$density, discrete = F) # beta distribution
+
+ggplot(ref.data, aes(x=sex, y=density)) +
+  geom_boxplot() +
+  theme_classic()
+
+#kruskal.test(proxXkey$density, proxXkey$withkey)
+wilcox.test(density~group_with_key, data=ref.data)
+
+# Calculate effects
+ref.data$density[ref.data$density==0.0]<-0.0001
+ref.data$density[ref.data$density==1.0]<-0.9999
+
+density.obs <- coefficients(betareg(density ~ sex, data = ref.data))[2]
+
+
+
+```
+
+
+```{r}
+## information transfer
+###### average path length ######
+
+range(ref.data$avg_path_length, na.rm=T)
+
+# normally distributed?
+ggplot(ref.data, aes(x=avg_path_length)) +
+  geom_histogram()  # very right skewed
+
+  # shapiro test p >0.05, data normally distributed
+#ggqqplot(trap, "time_s")
+shapiro.test(ref.data$avg_path_length)
+
+
+#m <- lm(avg_path_length ~ withkey, data = ref.data)
+m<- glm(avg_path_length ~ sex, data = ref.data, family=Gamma("inverse"))
+summary(m)
+d <- data.frame(residuals = residuals(m),         # Residuals
+                std_residuals = stats::rstudent(m), # Studentized Residuals
+                fitted = fitted(m),          # Fitted values
+                cooks = cooks.distance(m))   # Cook's D
+d <- mutate(d, observation = 1:nrow(d))           # Observation number
+
+# histogram of residuals
+ggplot(data = d, aes(x = std_residuals)) +
+  geom_histogram(bins = 10)
+
+# Check for Normality: QQ Normality plot of residuals
+ggplot(data = d, aes(sample = std_residuals)) +
+  stat_qq() +
+  stat_qq_line()
+
+# Check heteroscedasticity or constant variance
+ggplot(d, aes(x = fitted, y = std_residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0)
+
+# Cook's D
+ggplot(d, aes(x = observation, y = cooks)) +
+  geom_point() +
+  geom_hline(yintercept = 1, linetype = "dotted") +
+  geom_hline(yintercept = 4/nrow(d), linetype = "dashed")
+# outliers
+d_outliers <- filter(d, cooks > 4/nrow(d))  # observation 258 (time_s =14.6)
+
+# distribution
+fitdistrplus::plotdist(ref.data$avg_path_length)
+#fitdistrplus::descdist(ref.data$avg_path_length, discrete = F) # beta distribution
+
+ggplot(ref.data, aes(x=sex, y=avg_path_length)) +
+  geom_boxplot() +
+  theme_classic()
+
+
+wilcox.test(avg_path_length~sex, data=ref.data)
+
+
+m1<- glm(avg_path_length ~ sex, data = ref.data, family=Gamma("inverse"))
+m2 <- lm(avg_path_length ~ sex, data = ref.data)
+
+performance::compare_performance(m1,m2, rank = TRUE, verbose = FALSE)
+performance::check_model(m1)
+performance::check_model(m2)
+
+
+avg_path_length.obs <- coefficients(glm(avg_path_length ~ sex, data = ref.data, family=Gamma("inverse")))[2]
+#avg_path_length.obs <- coefficients(lm(avg_path_length ~ sex, data = ref.data))[2]
+
+
+```
+
+
+```{r}
+
+
+##### efficiency #####
+range(ref.data$efficiency, na.rm=T)
+
+# normally distributed?
+ggplot(ref.data, aes(x=efficiency)) +
+  geom_histogram()  # very right skewed
+
+# shapiro test p >0.05, data normally distributed
+#ggqqplot(trap, "time_s")
+shapiro.test(ref.data$efficiency)
+
+
+m <- lm(efficiency ~ sex, data = ref.data)
+#m<- glm(efficiency~ withkey, data = ref.data, family=Gamma("inverse"))
+summary(m)
+d <- data.frame(residuals = residuals(m),         # Residuals
+                std_residuals = stats::rstudent(m), # Studentized Residuals
+                fitted = fitted(m),          # Fitted values
+                cooks = cooks.distance(m))   # Cook's D
+d <- mutate(d, observation = 1:nrow(d))           # Observation number
+
+# histogram of residuals
+ggplot(data = d, aes(x = std_residuals)) +
+  geom_histogram(bins = 10)
+
+# Check for Normality: QQ Normality plot of residuals
+ggplot(data = d, aes(sample = std_residuals)) +
+  stat_qq() +
+  stat_qq_line()
+
+# Check heteroscedasticity or constant variance
+ggplot(d, aes(x = fitted, y = std_residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0)
+
+# Cook's D
+ggplot(d, aes(x = observation, y = cooks)) +
+  geom_point() +
+  geom_hline(yintercept = 1, linetype = "dotted") +
+  geom_hline(yintercept = 4/nrow(d), linetype = "dashed")
+# outliers
+d_outliers <- filter(d, cooks > 4/nrow(d))  # observation 258 (time_s =14.6)
+
+# distribution
+  fitdistrplus::plotdist(ref.data$efficiency)
+fitdistrplus::descdist(ref.data$efficiency, discrete = F)
+
+
+# Calculate effects
+ref.data$efficiency[ref.data$efficiency==0.0]<-0.0001
+ref.data$efficiency[ref.data$efficiency==1.0]<-0.9999
+
+efficiency.obs <- coefficients(betareg(efficiency ~ sex, data = ref.data))[2]
+
+ggplot(ref.data, aes(x=sex, y=efficiency)) +
+  geom_boxplot() +
+  theme_classic()
+
+```
+
+
+
+```{r}
+## combine observed coefficients
+network <-"agonistic"
+agg.obs<- cbind.data.frame(network, count.obs, diameter.obs,density.obs, avg_path_length.obs, efficiency.obs)
+
+```
+
+
+In the agonistic networks, we found no difference in network metrics between groups with key and without key individuals present. 
+
+### observed multilayer network
+
+```{r}
+
+multiXkey <- metricsXkey.sex %>% 
+  filter(network=="multilayer") 
+```
+
+
+``` {r connected}
+
+####### density  #####
+
+range(multiXkey$density)
+
+# normally distributed?
+ggplot(multiXkey, aes(x=density)) +  # BordaScore, bordarankreverse, bordareverse
+  geom_histogram()  # very right skewed
+
+# shapiro test p >0.05, data normally distributed
+#ggqqplot(trap, "time_s")
+shapiro.test(multiXkey$density)
+
+
+m <- lm(density ~ sex, data = multiXkey)
+summary(m)
+d <- data.frame(residuals = residuals(m),         # Residuals
+                std_residuals = stats::rstudent(m), # Studentized Residuals
+                fitted = fitted(m),          # Fitted values
+                cooks = cooks.distance(m))   # Cook's D
+d <- mutate(d, observation = 1:nrow(d))           # Observation number
+
+# histogram of residuals
+ggplot(data = d, aes(x = std_residuals)) +
+  geom_histogram(bins = 10)
+
+# Check for Normality: QQ Normality plot of residuals
+ggplot(data = d, aes(sample = std_residuals)) +
+  stat_qq() +
+  stat_qq_line()
+
+# Check heteroscedasticity or constant variance
+ggplot(d, aes(x = fitted, y = std_residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0)
+
+# Cook's D
+ggplot(d, aes(x = observation, y = cooks)) +
+  geom_point() +
+  geom_hline(yintercept = 1, linetype = "dotted") +
+  geom_hline(yintercept = 4/nrow(d), linetype = "dashed")
+# outliers
+d_outliers <- filter(d, cooks > 4/nrow(d))  # observation 258 (time_s =14.6)
+
+# distribution
+fitdistrplus::plotdist(multiXkey$density)
+fitdistrplus::descdist(multiXkey$density, discrete = F) # beta distribution
+
+ggplot(multiXkey, aes(x=sex, y=density)) +
+  geom_boxplot() +
+  theme_classic()
+
+wilcox.test(density~sex, data=multiXkey)
+
+# Calculate effects
+multiXkey$density[multiXkey$density==1.0]<-0.9999
+
+
+density.obs <- coefficients(betareg(density ~ sex, data = multiXkey))[2]
+
+```
+
+```{r information transfer}
+
+###### average path length ######
+ref.data <- multiXkey
+
+range(ref.data$m.apl, na.rm=T)
+
+# normally distributed?
+ggplot(ref.data, aes(x=m.apl)) +
+  geom_histogram()  # very right skewed
+
+  # shapiro test p >0.05, data normally distributed
+#ggqqplot(trap, "time_s")
+shapiro.test(ref.data$m.apl)
+
+
+m <- lm(m.apl ~ sex, data = ref.data)
+#m<- glm(avg_path_length ~ withkey, data = ref.data, family=Gamma("inverse"))
+summary(m)
+d <- data.frame(residuals = residuals(m),         # Residuals
+                std_residuals = stats::rstudent(m), # Studentized Residuals
+                fitted = fitted(m),          # Fitted values
+                cooks = cooks.distance(m))   # Cook's D
+d <- mutate(d, observation = 1:nrow(d))           # Observation number
+
+# histogram of residuals
+ggplot(data = d, aes(x = std_residuals)) +
+  geom_histogram(bins = 10)
+
+# Check for Normality: QQ Normality plot of residuals
+ggplot(data = d, aes(sample = std_residuals)) +
+  stat_qq() +
+  stat_qq_line()
+
+# Check heteroscedasticity or constant variance
+ggplot(d, aes(x = fitted, y = std_residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0)
+
+# Cook's D
+ggplot(d, aes(x = observation, y = cooks)) +
+  geom_point() +
+  geom_hline(yintercept = 1, linetype = "dotted") +
+  geom_hline(yintercept = 4/nrow(d), linetype = "dashed")
+# outliers
+d_outliers <- filter(d, cooks > 4/nrow(d))  # observation 258 (time_s =14.6)
+
+# distribution
+fitdistrplus::plotdist(ref.data$m.apl)
+#fitdistrplus::descdist(ref.data$avg_path_length, discrete = F) # beta distribution
+
+ggplot(ref.data, aes(x=sex, y=m.apl)) +
+  geom_boxplot() +
+  theme_classic()
+
+
+m1<- glm(m.apl ~ sex, data = ref.data, family=Gamma("inverse"))
+m2 <- lm(m.apl ~ sex, data = ref.data)
+
+performance::compare_performance(m1,m2, rank = TRUE, verbose = FALSE)
+performance::check_model(m1)
+performance::check_model(m2)
+
+
+avg_path_length.obs <- coefficients(glm(m.apl ~ sex, data = ref.data, family=Gamma("inverse")))[2]
+
+
+
+```
+
+
+```{r cohesion}
+
+
+range(multiXkey$cluster)
+
+# normally distributed?
+ggplot(multiXkey, aes(x=cluster)) +  # BordaScore, bordarankreverse, bordareverse
+  geom_histogram()  # very right skewed
+
+# shapiro test p >0.05, data normally distributed
+#ggqqplot(trap, "time_s")
+shapiro.test(ref.data$cluster)
+
+
+m <- lm(cluster ~ sex, data = ref.data)
+summary(m)
+d <- data.frame(residuals = residuals(m),         # Residuals
+                std_residuals = stats::rstudent(m), # Studentized Residuals
+                fitted = fitted(m),          # Fitted values
+                cooks = cooks.distance(m))   # Cook's D
+d <- mutate(d, observation = 1:nrow(d))           # Observation number
+
+# histogram of residuals
+ggplot(data = d, aes(x = std_residuals)) +
+  geom_histogram(bins = 10)
+
+# Check for Normality: QQ Normality plot of residuals
+ggplot(data = d, aes(sample = std_residuals)) +
+  stat_qq() +
+  stat_qq_line()
+
+# Check heteroscedasticity or constant variance
+ggplot(d, aes(x = fitted, y = std_residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0)
+
+# Cook's D
+ggplot(d, aes(x = observation, y = cooks)) +
+  geom_point() +
+  geom_hline(yintercept = 1, linetype = "dotted") +
+  geom_hline(yintercept = 4/nrow(d), linetype = "dashed")
+# outliers
+d_outliers <- filter(d, cooks > 4/nrow(d))  # observation 258 (time_s =14.6)
+
+# distribution
+fitdistrplus::plotdist(multiXkey$cluster)
+fitdistrplus::descdist(multiXkey$cluster, discrete = F) # beta distribution
+
+ggplot(multiXkey, aes(x=sex, y=cluster)) +
+  geom_boxplot() +
+  theme_classic()
+
+cluster.obs <- coefficients(lm(cluster ~ sex, data = multiXkey))[2]
+
+
+```
+
+
+```{r cohesion}
+
+
+range(multiXkey$overlap)
+
+ref.data <- multiXkey %>% 
+   filter(overlap<0.2)
+
+# normally distributed?
+ggplot(ref.data, aes(x=overlap)) +  # BordaScore, bordarankreverse, bordareverse
+  geom_histogram()  # very right skewed
+
+# shapiro test p >0.05, data normally distributed
+#ggqqplot(trap, "time_s")
+shapiro.test(multiXkey$overlap)
+shapiro.test(ref.data$overlap)
+
+m <- lm(overlap ~ sex, data = multiXkey)
+summary(m)
+d <- data.frame(residuals = residuals(m),         # Residuals
+                std_residuals = stats::rstudent(m), # Studentized Residuals
+                fitted = fitted(m),          # Fitted values
+                cooks = cooks.distance(m))   # Cook's D
+d <- mutate(d, observation = 1:nrow(d))           # Observation number
+
+# histogram of residuals
+ggplot(data = d, aes(x = std_residuals)) +
+  geom_histogram(bins = 10)
+
+# Check for Normality: QQ Normality plot of residuals
+ggplot(data = d, aes(sample = std_residuals)) +
+  stat_qq() +
+  stat_qq_line()
+
+# Check heteroscedasticity or constant variance
+ggplot(d, aes(x = fitted, y = std_residuals)) +
+  geom_point() +
+  geom_hline(yintercept = 0)
+
+# Cook's D
+ggplot(d, aes(x = observation, y = cooks)) +
+  geom_point() +
+  geom_hline(yintercept = 1, linetype = "dotted") +
+  geom_hline(yintercept = 4/nrow(d), linetype = "dashed")
+# outliers
+d_outliers <- filter(d, cooks > 4/nrow(d))  # observation 258 (time_s =14.6)
+
+# distribution
+fitdistrplus::plotdist(multiXkey$overlap)
+fitdistrplus::descdist(multiXkey$overlap, discrete = F) # beta distribution
+
+fitdistrplus::plotdist(ref.data$overlap)
+fitdistrplus::descdist(ref.data$overlap, discrete = F) # beta distribution
+
+ggplot(multiXkey, aes(x=sex, y=overlap)) +
+  geom_boxplot() +
+  theme_classic()
+
+overlap.obs <- coefficients(lm(overlap ~ sex, data = ref.data))[2]
+
+summary(lm(overlap ~ sex, data = ref.data))
+```
+
+```{r}
+## combine observed coefficients
+network <-"multilayer"
+multilayer.obs<- cbind.data.frame(network, 
+                                  density.obs, 
+                                  avg_path_length.obs, 
+                                  cluster.obs,
+                                  overlap.obs)
+
+```
+
+
+
+### combine results
+```{r}
+observed.summary <- bind_rows(prox.obs, aff.obs, agg.obs, multilayer.obs)
+
+write.csv(observed.summary, "../results/observed summary metricsXsex.csv")
+```
+
+
+
+
+##	Reference model
+create reference model where sex is randomized and calculate network metrics and compare 
+
+We excluded solitary degus.  
+
+### summarize ref proximity
+
+```{r create ref model}
+metricsXkey.sex$sex <- as.factor(metricsXkey.sex$sex)
+
+groupXkey <- metricsXkey.sex %>% 
+  ungroup() %>% 
+  filter(network=="proximity")  %>% 
+  dplyr::select(groupID, sex) 
+  #distinct(groupID)
+
+proxXkey <- metricsXkey.sex %>% 
+  filter(network=="proximity")  
+
+glimpse(groupXkey)
+
+N<- n_distinct(groupXkey$groupID)
+
+replicates <- 1000
+
+#run=2
+
+#make empty dataframe to write loop results into
+ref.model.prox <- data.frame(groupID=character(),
+                       network=character(),
+                       count=numeric(),
+                       diameter=numeric(),
+                       density=numeric(),
+                       avg_path_length=numeric(),
+                       efficiency=numeric(),
+                       sex=factor(),
+                       random.sex=factor())
+
+
+for (run in 1:replicates) {
+  r.seed <- run
+  RNGkind(sample.kind="default") # code to get same random numbers across operating systems (mac vs windows)
+  set.seed(r.seed)
+  print(run)
+  
+  # Randomise groups with key individuals
+	s <- sample(1:N)
+	groupXkey$random.sex <- groupXkey$sex[s]
+	                     
+  ref.data <- proxXkey %>% 
+    select(groupID, network, count, diameter, density, avg_path_length, efficiency) %>% 
+  left_join(groupXkey, by="groupID")
+  
+  ref.data$runID <- rep(paste0("run",str_pad(r.seed, 3, side="left", pad = "0")), length(proxXkey$X)) #generates run IDs that are all 3 digits (001-100), change to 4 digit-padding if running >999
+    
+  ref.data <- as.data.frame(ref.data)
+  ref.model.prox <- rbind.data.frame(ref.model.prox, ref.data)
+}
+
+#write.csv(ref.model, "results/refmodel_function_fall24.csv")
+
+
+```
+
+
+```{r summarize ref model - proximity}
+
+ref.model <- ref.model.prox
+
+job::job({
+run.s <- as.character(unique(ref.model$runID))
+replicates <- 1000 #how many runs of the reference model were done
+
+
+
+ref.summary.prox<- data.frame(network=character(),
+                              run.code=character(),
+                              #random.sex=factor(),
+                              count=numeric(),
+                              diameter.ref=numeric(),
+                              density.ref=numeric(),
+                              avg_path_length.ref=numeric(),
+                              efficiency.ref=numeric())
+
+
+start.time <- Sys.time()
+
+for(run in 1:replicates){
+  run.code <- run.s[run]
+  print(run.code)
+  
+  run.data <- filter(ref.model.prox, 
+                     #network=="proximity",
+                     runID==run.code)
+
+network <- "proximity"
+
+
+###### number of associations
+count.ref <- coefficients(glm(count ~ random.sex, data = run.data, family = poisson))[2]
+
+
+###### connectivity
+diameter.ref <- coefficients(lm(diameter ~ random.sex, data = run.data))[2]
+
+
+
+####### density  
+run.data$density[run.data$density==0.0]<-0.0001
+run.data$density[run.data$density==1.0]<-0.9999
+
+density.ref <- coefficients(betareg(density ~ random.sex, data = run.data))[2]
+
+
+## information transfer
+###### average path length 
+
+#avg_path_length.ref <- coefficients(glm(avg_path_length ~ random.key, data = run.data, family=Gamma("inverse")))[2]
+avg_path_length.ref <- coefficients(lm(avg_path_length ~ random.sex, data = run.data))[2]
+
+##### efficiency 
+run.data$efficiency[run.data$efficiency==0.0]<-0.0001
+run.data$efficiency[run.data$efficiency==1.0]<-0.9999
+
+efficiency.ref <- coefficients(betareg(efficiency ~ random.sex, data = run.data))[2]
+
+
+
+## combine random coefficients
+
+coefficients.ref <- cbind.data.frame(network, 
+                                     run.code, 
+                                     count.ref, 
+                                     diameter.ref,
+                                     density.ref, 
+                                     avg_path_length.ref, 
+                                     efficiency.ref)
+
+ref.summary.prox <- rbind(ref.summary.prox, coefficients.ref)
+
+}
+end.time <- Sys.time()
+
+#Time to run:
+end.time - start.time
+
+#t(ref.model.summaries)
+head(ref.summary.prox)
+tail(ref.summary.prox)
+
+})
+
+# write data
+#write.csv(ref.model.summaries, "ANALYZE-SUMM.refmodel1.csv")
+
+
+```
+
+### summarize ref affiliative
+
+```{r}
+
+metricsXkey.sex$sex <- as.factor(metricsXkey.sex$sex)
+
+groupXkey <- metricsXkey.sex %>% 
+  ungroup() %>% 
+  filter(network=="affiliative")  %>% 
+  dplyr::select(groupID, sex) 
+  #distinct(groupID)
+#glimpse(groupXkey)
+
+
+affXkey <- metricsXkey.sex %>% 
+  filter(network=="affiliative") 
+
+N<- n_distinct(groupXkey$groupID)
+
+replicates <- 1000
+
+#run=2
+
+#make empty dataframe to write loop results into
+ref.model.aff <- data.frame(groupID=character(),
+                       network=character(),
+                       random.sex=factor(),
+                       count=numeric(),
+                       diameter=numeric(),
+                       density=numeric(),
+                       avg_path_length=numeric(),
+                       efficiency=numeric())
+
+job::job({
+
+for (run in 1:replicates) {
+  r.seed <- run
+  RNGkind(sample.kind="default") # code to get same random numbers across operating systems (mac vs windows)
+  set.seed(r.seed)
+  
+  
+  # Randomise groups with key individuals
+	s <- sample(1:N)
+	groupXkey$random.sex <- groupXkey$sex[s]
+	                     
+  ref.data <- affXkey %>% 
+    select(group, groupID, network, count, diameter, density, avg_path_length, efficiency) %>% 
+  left_join(groupXkey, by="groupID")
+  
+  ref.data$runID <- rep(paste0("run",str_pad(r.seed, 3, side="left", pad = "0")), length(affXkey$group)) #generates run IDs that are all 3 digits (001-100), change to 4 digit-padding if running >999
+    
+  ref.data <- as.data.frame(ref.data)
+  ref.model.aff <- rbind.data.frame(ref.model.aff, ref.data)
+}
+  
+})
+```
+
+
+
+```{r summarize ref model - affiliative}
+
+ref.model <- ref.model.aff
+
+job::job({
+
+run.s <- as.character(unique(ref.model.aff$runID))
+replicates <- 1000 #how many runs of the reference model were done
+
+
+start.time <- Sys.time()
+
+ref.summary.aff <- data.frame(network=character(),
+                              run.code=character(),
+                              count.ref=numeric(),
+                              diameter.ref=numeric(),
+                              density.ref=numeric(),
+                              avg_path_length.ref=numeric(),
+                              efficiency.ref=numeric())
+
+
+start.time <- Sys.time()
+
+for(run in 1:replicates){
+  run.code <- run.s[run]
+  print(run.code)
+  run.data <- filter(ref.model.aff, 
+                     #network=="affiliative",
+                     runID==run.code)
+
+network <- "affiliative"
+
+###### number of interactions
+count.ref <- coefficients(glm(count ~ random.sex, data = run.data, family = poisson))[2]
+
+###### connectivity
+diameter.ref <- coefficients(lm(diameter ~ random.sex, data = run.data))[2]
+
+
+
+####### density  
+run.data$density[run.data$density==0.0]<-0.0001
+run.data$density[run.data$density==1.0]<-0.9999
+
+density.ref <- coefficients(betareg(density ~ random.sex, data = run.data))[2]
+
+
+## information transfer
+###### average path length 
+
+#avg_path_length.ref <- coefficients(glm(avg_path_length ~ random.key, data = run.data, family=Gamma("inverse")))[2]
+avg_path_length.ref <- coefficients(lm(avg_path_length ~ random.sex, data = run.data))[2]
+
+##### efficiency 
+run.data$efficiency[run.data$efficiency==0.0]<-0.0001
+run.data$efficiency[run.data$efficiency==1.0]<-0.9999
+
+efficiency.ref <- coefficients(betareg(efficiency ~ random.sex, data = run.data))[2]
+
+
+
+## combine random coefficients
+
+coefficients.ref <- cbind.data.frame(network, 
+                                     run.code, 
+                                     count.ref,
+                                     diameter.ref,
+                                     density.ref, 
+                                     avg_path_length.ref, 
+                                     efficiency.ref)
+
+ref.summary.aff <- rbind(ref.summary.aff, coefficients.ref)
+
+}
+end.time <- Sys.time()
+
+#Time to run:
+end.time - start.time
+
+#t(ref.model.summaries)
+head(ref.summary.aff)
+tail(ref.summary.aff)
+
+})
+
+
+# write data
+#write.csv(ref.model.summaries, "ANALYZE-SUMM.refmodel1.csv")
+
+
+```
+### summarize ref agonistic
+
+```{r}
+
+groupXkey <- metricsXkey.sex %>% 
+  ungroup() %>% 
+  filter(network=="agonistic")  %>% 
+  dplyr::select(groupID, sex) 
+
+aggXkey <- metricsXkey.sex %>% 
+  filter(network=="agonistic") 
+
+N<- n_distinct(groupXkey$groupID)
+
+replicates <- 1000
+
+#run=2
+
+#make empty dataframe to write loop results into
+ref.model.agg <- data.frame(groupID=numeric(),
+                       network=character(),
+                       count=numeric(),
+                       diameter=numeric(),
+                       density=numeric(),
+                       avg_path_length=numeric(),
+                       efficiency=numeric(),
+                       random.sex=factor())
+
+job::job({
+
+for (run in 1:replicates) {
+  r.seed <- run
+  RNGkind(sample.kind="default") # code to get same random numbers across operating systems (mac vs windows)
+  set.seed(r.seed)
+  
+  
+  # Randomise groups with key individuals
+	s <- sample(1:N)
+	groupXkey$random.sex <- groupXkey$sex[s]
+	                     
+  ref.data <- aggXkey %>% 
+    select(groupID, network, count, diameter, density, avg_path_length, efficiency) %>% 
+  left_join(groupXkey)
+  
+  ref.data$runID <- rep(paste0("run",str_pad(r.seed, 3, side="left", pad = "0")), length(aggXkey$groupID)) #generates run IDs that are all 3 digits (001-100), change to 4 digit-padding if running >999
+    
+  ref.data <- as.data.frame(ref.data)
+  ref.model.agg <- rbind.data.frame(ref.model.agg, ref.data)
+}
+  
+})
+```
+
+
+```{r summarize ref model - agonsitic}
+
+job::job({
+run.s <- as.character(unique(ref.model$runID))
+replicates <- 1000 #how many runs of the reference model were done
+
+
+start.time <- Sys.time()
+
+ref.summary.ago<- data.frame(network=character(),
+                             run.code=character(),
+                             count.ref=numeric(),
+                             diameter.ref=numeric(),
+                             density.ref=numeric(),
+                             avg_path_length.ref=numeric(),
+                             efficiency.ref=numeric())
+
+
+start.time <- Sys.time()
+
+for(run in 1:replicates){
+  run.code <- run.s[run]
+  print(run.code)
+  run.data <- filter(ref.model.agg, 
+                     #network=="agonistic",
+                     runID==run.code)
+
+network <- "agonistic"
+
+###### number of associations
+count.ref <- coefficients(glm(count ~ random.sex, data = run.data, family = poisson))[2]
+
+###### connectivity
+diameter.ref <- coefficients(lm(diameter ~ random.sex, data = run.data))[2]
+
+
+####### density  
+run.data$density[run.data$density==0.0]<-0.0001
+run.data$density[run.data$density==1.0]<-0.9999
+
+density.ref <- coefficients(betareg(density ~ random.sex, data = run.data))[2]
+
+
+## information transfer
+###### average path length 
+
+avg_path_length.ref <- coefficients(glm(avg_path_length ~ random.sex, data = run.data, family=Gamma("inverse")))[2]
+
+
+##### efficiency 
+run.data$efficiency[run.data$efficiency==0.0]<-0.0001
+run.data$efficiency[run.data$efficiency==1.0]<-0.9999
+
+efficiency.ref <- coefficients(betareg(efficiency ~ random.sex, data = run.data))[2]
+
+
+
+## combine random coefficients
+
+coefficients.ref <- cbind.data.frame(network, run.code, 
+                                     count.ref,
+                                     diameter.ref,
+                                     density.ref, 
+                                     avg_path_length.ref, 
+                                     efficiency.ref)
+
+ref.summary.ago <- rbind(ref.summary.ago, coefficients.ref)
+
+}
+end.time <- Sys.time()
+
+#Time to run:
+end.time - start.time
+
+#t(ref.model.summaries)
+head(ref.summary.ago)
+tail(ref.summary.ago)
+
+})
+
+
+# write data
+#write.csv(ref.model.summaries, "ANALYZE-SUMM.refmodel1.csv")
+
+
+```
+
+
+###summarize ref multilayer
+
+```{r}
+
+groupXkey <- metricsXkey.sex %>% 
+  ungroup() %>% 
+  filter(network=="multilayer")  %>% 
+  dplyr::select(groupID, sex) 
+
+multiXkey <- metricsXkey.sex %>% 
+  filter(network=="multilayer") 
+
+
+N<- n_distinct(groupXkey$groupID)
+
+replicates <- 1000
+
+#run=2
+
+#make empty dataframe to write loop results into
+ref.model.multi <- data.frame(groupID=character(),
+                       network=character(),
+                       diameter=numeric(),
+                       density=numeric(),
+                       avg_path_length=numeric(),
+                       cluster=numeric(),
+                       overlap=numeric(),
+                       random.sex=factor())
+
+job::job({
+
+for (run in 1:replicates) {
+  r.seed <- run
+  RNGkind(sample.kind="default") # code to get same random numbers across operating systems (mac vs windows)
+  set.seed(r.seed)
+  
+  
+  # Randomise groups with key individuals
+	s <- sample(1:N)
+	groupXkey$random.sex <- groupXkey$sex[s]
+	                     
+  ref.data <- multiXkey %>% 
+    select(groupID, network, diameter, density, m.apl, cluster, overlap) %>% 
+  left_join(groupXkey, by="groupID")
+  
+  ref.data$runID <- rep(paste0("run",str_pad(r.seed, 3, side="left", pad = "0")), length(multiXkey$groupID)) #generates run IDs that are all 3 digits (001-100), change to 4 digit-padding if running >999
+    
+  ref.data <- as.data.frame(ref.data)
+  ref.model.multi <- rbind.data.frame(ref.model.multi, ref.data)
+}
+  
+})
+```
+
+
+```{r summarize ref model - multilayer}
+
+job::job({
+run.s <- as.character(unique(ref.model.multi$runID))
+replicates <- 1000 #how many runs of the reference model were done
+
+
+start.time <- Sys.time()
+
+ref.summary.multi<- data.frame(network=character(),
+                             run.code=character(),
+                             #diameter.ref=numeric(),
+                             density.ref=numeric(),
+                             avg_path_length.ref=numeric(),
+                             cluster.ref=numeric(),
+                             overlap.ref=numeric())
+
+
+for(run in 1:replicates){
+  run.code <- run.s[run]
+  print(run.code)
+  run.data <- filter(ref.model.multi, 
+                     runID==run.code)
+
+network <- "multilayer"
+
+
+####### density  
+run.data$density[run.data$density==0.0]<-0.0001
+run.data$density[run.data$density==1.0]<-0.9999
+
+density.ref <- coefficients(betareg(density ~ random.sex, data = run.data))[2]
+
+
+## information transfer
+###### average path length 
+
+avg_path_length.ref <- coefficients(glm(m.apl ~ random.sex, data = run.data, family=Gamma("inverse")))[2]
+
+
+# cohesion
+cluster.ref <- coefficients(lm(cluster ~ random.sex, data = run.data))[2]
+overlap.ref <- coefficients(lm(overlap ~ random.sex, data = run.data))[2]
+
+## combine random coefficients
+
+coefficients.ref <- cbind.data.frame(network, run.code, 
+                                     #count.ref,
+                                     #diameter.ref,
+                                     density.ref, 
+                                     avg_path_length.ref, 
+                                     cluster.ref,
+                                     overlap.ref)
+
+ref.summary.multi <- rbind(ref.summary.multi, coefficients.ref)
+
+}
+end.time <- Sys.time()
+
+#Time to run:
+end.time - start.time
+
+#t(ref.model.summaries)
+head(ref.summary.multi)
+tail(ref.summary.multi)
+
+})
+
+
+# write data
+#write.csv(ref.model.summaries, "ANALYZE-SUMM.refmodel1.csv")
+
+
+```
+
+
+
+
+## Visualise results
+
+```{r}
+observed.summary <-  read.csv("../results/observed summary metricsXsex.csv")
+```
+
+
+### proximity
+ Are observed values significantly different from random values in reference models?
+
+find proportion of random values less than the observed values, you can use this as a kind of p value. p should be >0.975 for two-tailed test, >0.95 for one-tailed test for something significantly different from the random values in the reference model
+  
+
+```{r proximity results}
+glimpse(observed.summary)
+glimpse(prox.obs)
+glimpse(ref.summary.prox)
+
+prox.obs <- observed.summary %>% 
+  filter(network=="proximity")
+
+sum(prox.obs$count.obs[prox.obs$network=="proximity"]<ref.summary.prox$count.ref)/length(ref.summary.prox$count.ref)
+
+plot_prox_count_p <- ggplot(ref.summary.prox, aes(x=count.ref)) +
+  geom_histogram(color="grey", fill="grey") +
+  theme_classic() +
+  labs(x= "Count coefficient value ", y="Frequency", title = "P = 0.51") +
+  #geom_vline(xintercept=observed.summary$diameter.obs[observed.summary$network=="proximity"], color="red") +
+  geom_vline(xintercept=prox.obs$count.obs[prox.obs$network=="proximity"], color="red") +
+  geom_vline(xintercept = rep(quantile(ref.summary.prox$count.ref, 0.025), 2), color="darkblue", lty=2) +
+  geom_vline(xintercept = rep(quantile(ref.summary.prox$count.ref, 0.975), 2), color="darkblue", lty=2) +
+  #geom_text(x=-0.135, y=81, label="p = 0.53")
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.line.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank(),
+        title = element_text(size=6))
+
+plot_prox_count <- metricsXkey.sex %>% 
+  filter(network=="proximity") %>%
+  ggplot( aes(x=sex, y=count, color=sex)) +
+   geom_violin(width=0.5, color="black")+
+  geom_boxplot(width=0.2, color="grey", alpha=0.6) +
+  geom_jitter(  width=0.05) +
+  theme_classic() +
+  scale_color_manual( values=alpha(c('#5D3A9B', "#E66100"),0.8)) + 
+  labs(y="Count", x="Sex key individual") +
+  theme(#axis.text = element_text(size=18),
+        #title = element_text(size=20),
+        legend.position = "none") 
+
+
+
+
+sum(prox.obs$diameter.obs[prox.obs$network=="proximity"]<ref.summary.prox$diameter.ref)/length(ref.summary.prox$diameter.ref)
+
+plot_prox_diameter <- ggplot(ref.summary.prox, aes(x=diameter.ref)) +
+  geom_histogram(color="grey", fill="grey") +
+  theme_classic() +
+  labs(x= "Diameter coefficient value ", y="Frequency", title = "P = 0.78") +
+  #geom_vline(xintercept=observed.summary$diameter.obs[observed.summary$network=="proximity"], color="red") +
+  geom_vline(xintercept=prox.obs$diameter.obs[prox.obs$network=="proximity"], color="red") +
+  geom_vline(xintercept = rep(quantile(ref.summary.prox$diameter.ref, 0.025), 2), color="darkblue", lty=2) +
+  geom_vline(xintercept = rep(quantile(ref.summary.prox$diameter.ref, 0.975), 2), color="darkblue", lty=2) +
+  #geom_text(x=-0.135, y=81, label="p = 0.53")
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.line.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank(),
+        title = element_text(size=6))
+
+plot_prox_dia <- metricsXkey.sex %>% 
+  filter(network=="proximity") %>%
+  ggplot( aes(x=sex, y=diameter, color=sex)) +
+   geom_violin(width=0.5, color="black")+
+  geom_boxplot(width=0.2, color="grey", alpha=0.6) +
+  geom_jitter(  width=0.05) +
+  scale_y_continuous(labels = label_number(accuracy = 0.01))+
+  theme_classic() +
+  scale_color_manual( values=alpha(c('#5D3A9B', "#E66100"),0.8)) +
+  labs(y="Diameter", x="Sex key individual") +
+  theme(#axis.text = element_text(size=18),
+        #title = element_text(size=20),
+        legend.position = "none") 
+
+ sum(prox.obs$density.obs[prox.obs$network=="proximity"]<ref.summary.prox$density.ref)/length(ref.summary.prox$density.ref)
+plot_prox_density <-  ggplot(ref.summary.prox, aes(x=density.ref)) +
+  geom_histogram(color="grey", fill="grey") +
+  theme_classic() +
+  labs(x= "Density coefficient value", y="Frequency", title = "P = 0.89") +
+  geom_vline(xintercept=prox.obs$density.obs[prox.obs$network=="proximity"], color="red") +
+  geom_vline(xintercept = rep(quantile(ref.summary.prox$density.ref, 0.025), 2), color="darkblue", lty=2) +
+  geom_vline(xintercept = rep(quantile(ref.summary.prox$density.ref, 0.975), 2), color="darkblue", lty=2) +
+  #  geom_text(x=-2.7, y=225, label="p = 0.46") +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.line.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank(),
+        title = element_text(size=6))
+ 
+plot_prox_den <- metricsXkey.sex %>% 
+  filter(network=="proximity") %>%
+  ggplot( aes(x=sex, y=density, color=sex)) +
+   geom_violin(width=0.5, color="black")+
+  geom_boxplot(width=0.2, color="grey", alpha=0.6) +
+  geom_jitter(  width=0.05) +
+  scale_y_continuous(labels = label_number(accuracy = 0.01))+
+  theme_classic() +
+  scale_color_manual( values=alpha(c('#5D3A9B', "#E66100"),0.8)) +
+  labs(y="Density", x="Sex key individual") +
+  theme(#axis.text = element_text(size=18),
+        #title = element_text(size=20),
+        legend.position = "none") 
+
+
+sum(prox.obs$avg_path_length.obs[prox.obs$network=="proximity"]<ref.summary.prox$avg_path_length.ref)/length(ref.summary.prox$avg_path_length.ref)
+plot_prox_apl_p <- ggplot(ref.summary.prox, aes(x=avg_path_length.ref)) +
+  geom_histogram(color="grey", fill="grey") +
+  theme_classic() +
+  labs(x= "Average path length coefficient value", y="Frequency", title="P = 0.72") +
+  geom_vline(xintercept=prox.obs$avg_path_length.obs[prox.obs$network=="proximity"], color="red") +
+  geom_vline(xintercept = rep(quantile(ref.summary.prox$avg_path_length.ref, 0.025), 2), color="darkblue", lty=2) +
+  geom_vline(xintercept = rep(quantile(ref.summary.prox$avg_path_length.ref, 0.975), 2), color="darkblue", lty=2) +
+  #geom_text(x=-4.5, y=80, label="p = 0.42") +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.line.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank(),
+        title = element_text(size=6))
+
+plot_prox_apl <- metricsXkey.sex %>% 
+  filter(network=="proximity") %>%
+  ggplot( aes(x=sex, y=avg_path_length, color=sex)) +
+   geom_violin(width=0.5, color="black")+
+  geom_boxplot(width=0.2, color="grey", alpha=0.6) +
+  geom_jitter(  width=0.05) +
+  scale_y_continuous(labels = label_number(accuracy = 0.01))+
+  theme_classic() +
+  scale_color_manual( values=alpha(c('#5D3A9B', "#E66100"),0.8)) +
+  labs(y="Average path length", x="Sex key individual") +
+  theme(#axis.text = element_text(size=18),
+        #title = element_text(size=20),
+        legend.position = "none") 
+  
+   sum(prox.obs$efficiency.obs[prox.obs$network=="proximity"]<ref.summary.prox$efficiency.ref)/length(ref.summary.prox$efficiency.ref)
+plot_prox_eff_p <-   ggplot(ref.summary.prox, aes(x=efficiency.ref)) +
+  geom_histogram(color="grey", fill="grey") +
+  theme_classic() +
+  labs(x= "Efficiency coefficient value", y="Frequency", title="P = 0.32") +
+  geom_vline(xintercept=prox.obs$efficiency.obs[prox.obs$network=="proximity"], color="red") +
+  geom_vline(xintercept = rep(quantile(ref.summary.prox$efficiency.ref, 0.025), 2), color="darkblue", lty=2) +
+  geom_vline(xintercept = rep(quantile(ref.summary.prox$efficiency.ref, 0.975), 2), color="darkblue", lty=2) +
+  #geom_text(x=-1.5, y=195, label="p = 0.26") +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.line.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank(),
+        title = element_text(size=6))
+
+plot_prox_eff <- metricsXkey.sex %>% 
+  filter(network=="proximity") %>%
+  ggplot( aes(x=sex, y=efficiency, color=sex)) +
+   geom_violin(width=0.5, color="black")+
+  geom_boxplot(width=0.2, color="grey", alpha=0.6) +
+  geom_jitter(  width=0.05) +
+  scale_y_continuous(labels = label_number(accuracy = 0.01))+
+  theme_classic() +
+  scale_color_manual( values=alpha(c('#5D3A9B', "#E66100"),0.8)) +
+  labs(y="Efficiency", x="Sex key individual") +
+  theme(#axis.text = element_text(size=18),
+        #title = element_text(size=20),
+        legend.position = "none") 
+   
+```
+
+```{r}
+ggpubr::ggarrange(plot_prox_count, plot_prox_count_p,
+                  plot_prox_dia, plot_prox_diameter,
+                 
+                  plot_prox_den,  plot_prox_density, 
+                  
+                  plot_prox_apl,plot_prox_apl_p,
+                  
+                  plot_prox_eff,plot_prox_eff_p,
+                  nrow = 5, ncol=2)
+
+# Add the inset plot to the main plot
+plot_prox_cou1 <- plot_prox_count +
+  annotation_custom(
+    grob = ggplotGrob(plot_prox_count_p ),
+    xmin = 1.2, xmax = 1.8,
+    ymin = 300, ymax = 450
+  )
+
+plot_prox_dia1 <- plot_prox_dia +
+  annotation_custom(
+    grob = ggplotGrob(plot_prox_diameter ),
+    xmin = 1.2, xmax = 1.8,
+    #xmin = 0.4, xmax = 0.8,
+    ymin = 1.0, ymax = 1.5
+  )
+
+plot_prox_den1 <- plot_prox_den +
+  annotation_custom(
+    grob = ggplotGrob(plot_prox_density ),
+    xmin = 1.2, xmax = 1.8,
+    #xmin = 0.4, xmax = 0.85,
+    ymin = 0.7, ymax = 0.85
+  )
+
+plot_prox_apl1 <- plot_prox_apl +
+  annotation_custom(
+    grob = ggplotGrob(plot_prox_apl_p ),
+    xmin = 1.2, xmax = 1.8,
+    #xmin = 0.4, xmax = 0.9,
+    ymin = 0.6, ymax = 0.9
+  )
+
+plot_prox_eff1 <- plot_prox_eff +
+  annotation_custom(
+    grob = ggplotGrob(plot_prox_eff_p ),
+    xmin = 1.2, xmax = 1.8,
+    #xmin = 0.4, xmax = 0.9,
+    ymin = 0.6, ymax = 1
+  )
+
+
+
+ggpubr::ggarrange(plot_prox_cou1 + rremove('xlab') , 
+                  plot_prox_dia1 + rremove('xlab') , 
+                  plot_prox_den1 + rremove('xlab'),
+                  plot_prox_apl1, 
+                  plot_prox_eff1
+                  )
+ggsave("figures/groupmetrics_prox_fall24.pdf",width=180, height = 120, units = "mm", dpi = 300)
+```
+
+
+
+### affiliative
+
+```{r affiliative results}
+glimpse(ref.summary.aff)
+
+sum(observed.summary$count.obs[observed.summary$network=="affiliative"]<ref.summary.aff$count.ref)/length(ref.summary.aff$count.ref)
+plot_aff_count_p <-  ggplot(ref.summary.aff, aes(x=count.ref)) +
+  geom_histogram(color="grey", fill="grey") +
+  theme_classic() +
+  labs(x= "Count coefficient value", y="Frequency", title="P = 0.19") +
+  geom_vline(xintercept=observed.summary$count.obs[observed.summary$network=="affiliative"], color="red") +
+  geom_vline(xintercept = rep(quantile(ref.summary.aff$count.ref, 0.025), 2), color="darkblue", lty=2) +
+  geom_vline(xintercept = rep(quantile(ref.summary.aff$count.ref, 0.975), 2), color="darkblue", lty=2) +
+  #geom_text(x=-0.135, y=85, label="p = 0.64") +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.line.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank(),
+        title = element_text(size=6))
+
+plot_aff_count <- metricsXkey.sex %>% 
+  filter(network=="affiliative") %>%
+  ggplot( aes(x=sex, y=count, color=sex)) +
+   geom_violin(width=0.5, color="black")+
+  geom_boxplot(width=0.2, color="grey", alpha=0.6) +
+  geom_jitter(  width=0.05) +
+  theme_classic() +
+  scale_color_manual( values=alpha(c('#5D3A9B', "#E66100"),0.8)) +
+  labs(y="Count", x="Sex key individual") +
+  theme(#axis.text = element_text(size=18),
+        #title = element_text(size=20),
+        legend.position = "none") 
+
+sum(observed.summary$diameter.obs[observed.summary$network=="affiliative"]<ref.summary.aff$diameter.ref)/length(ref.summary.aff$diameter.ref)
+plot_aff_diameter <-  ggplot(ref.summary.aff, aes(x=diameter.ref)) +
+  geom_histogram(color="grey", fill="grey") +
+  theme_classic() +
+  labs(x= "Diameter coefficient value", y="Frequency", title="P = 0.55") +
+  geom_vline(xintercept=observed.summary$diameter.obs[observed.summary$network=="affiliative"], color="red") +
+  geom_vline(xintercept = rep(quantile(ref.summary.aff$diameter.ref, 0.025), 2), color="darkblue", lty=2) +
+  geom_vline(xintercept = rep(quantile(ref.summary.aff$diameter.ref, 0.975), 2), color="darkblue", lty=2) +
+  #geom_text(x=-0.135, y=85, label="p = 0.64") +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.line.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank(),
+        title = element_text(size=6))
+
+plot_aff_dia <- metricsXkey.sex %>% 
+  filter(network=="affiliative") %>%
+  ggplot( aes(x=sex, y=diameter, color=sex)) +
+   geom_violin(width=0.5, color="black")+
+  geom_boxplot(width=0.2, color="grey", alpha=0.6) +
+  geom_jitter(  width=0.05) +
+  scale_y_continuous(labels = label_number(accuracy = 0.01))+
+  theme_classic() +
+  scale_color_manual( values=alpha(c('#5D3A9B', "#E66100"),0.8)) +
+  labs(y="Diameter", x="Sex key individual") +
+  theme(#axis.text = element_text(size=18),
+        #title = element_text(size=20),
+        legend.position = "none") 
+
+
+ sum(observed.summary$density.obs[observed.summary$network=="affiliative"]<ref.summary.aff$density.ref)/length(ref.summary.aff$density.ref)
+plot_aff_density <- ggplot(ref.summary.aff, aes(x=density.ref)) +
+  geom_histogram(color="grey", fill="grey") +
+  theme_classic() +
+  labs(x= "Density coefficient value", y="Frequency", title="P = 0.27") +
+  geom_vline(xintercept=observed.summary$density.obs[observed.summary$network=="affiliative"], color="red") +
+  geom_vline(xintercept = rep(quantile(ref.summary.aff$density.ref, 0.025), 2), color="darkblue", lty=2) +
+  geom_vline(xintercept = rep(quantile(ref.summary.aff$density.ref, 0.975), 2), color="darkblue", lty=2) +
+    #geom_text(x=-2.7, y=225, label="") +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.line.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank(),
+        title = element_text(size=6))
+ 
+plot_aff_den <- metricsXkey.sex %>% 
+  filter(network=="affiliative") %>%
+  ggplot( aes(x=sex, y=density, color=sex)) +
+   geom_violin(width=0.5, color="black")+
+  geom_boxplot(width=0.2, color="grey", alpha=0.6) +
+  geom_jitter(  width=0.05) +
+  scale_y_continuous(labels = label_number(accuracy = 0.01))+
+  theme_classic() +
+  scale_color_manual( values=alpha(c('#5D3A9B', "#E66100"),0.8)) +
+  labs(y="Density", x="Sex key individual") +
+  theme(#axis.text = element_text(size=18),
+        #title = element_text(size=20),
+        legend.position = "none") 
+
+  sum(observed.summary$avg_path_length.obs[observed.summary$network=="affiliative"]<ref.summary.aff$avg_path_length.ref)/length(ref.summary.aff$avg_path_length.ref)
+ plot_aff_apl_p <- ggplot(ref.summary.aff, aes(x=avg_path_length.ref)) +
+  geom_histogram(color="grey", fill="grey") +
+  theme_classic() +
+  labs(x= "Average path length coefficient value", y="Frequency", title="P = 0.18") +
+  geom_vline(xintercept=observed.summary$avg_path_length.obs[observed.summary$network=="affiliative"], color="red") +
+  geom_vline(xintercept = rep(quantile(ref.summary.aff$avg_path_length.ref, 0.025), 2), color="darkblue", lty=2) +
+  geom_vline(xintercept = rep(quantile(ref.summary.aff$avg_path_length.ref, 0.975), 2), color="darkblue", lty=2) +
+     #geom_text(x=-4.5, y=70, label="") +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.line.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank(),
+        title = element_text(size=6))
+ 
+ plot_aff_apl <- metricsXkey.sex %>% 
+  filter(network=="affiliative") %>%
+  ggplot( aes(x=sex, y=avg_path_length, color=sex)) +
+   geom_violin(width=0.5, color="black")+
+  geom_boxplot(width=0.2, color="grey", alpha=0.6) +
+  geom_jitter(  width=0.05) +
+   scale_y_continuous(labels = label_number(accuracy = 0.01))+
+  theme_classic() +
+  scale_color_manual( values=alpha(c('#5D3A9B', "#E66100"),0.8)) +
+  labs(y="Average path length", x="Sex key individual") +
+  theme(#axis.text = element_text(size=18),
+        #title = element_text(size=20),
+        legend.position = "none") 
+  
+  
+   sum(observed.summary$efficiency.obs[observed.summary$network=="affiliative"]<ref.summary.aff$efficiency.ref)/length(ref.summary.aff$efficiency.ref)
+plot_aff_eff_p <- ggplot(ref.summary.aff, aes(x=efficiency.ref)) +
+  geom_histogram(color="grey", fill="grey") +
+  theme_classic() +
+  labs(x= "Efficiency coefficient value", y="Frequency", title="P = 0.66") +
+  geom_vline(xintercept=observed.summary$efficiency.obs[observed.summary$network=="affiliative"], color="red") +
+  geom_vline(xintercept = rep(quantile(ref.summary.aff$efficiency.ref, 0.025), 2), color="darkblue", lty=2) +
+  geom_vline(xintercept = rep(quantile(ref.summary.aff$efficiency.ref, 0.975), 2), color="darkblue", lty=2)  +
+      #  geom_text(x=-0.4, y=81, label="p = 0.53") +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.line.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank(),
+        title = element_text(size=6))
+
+  plot_aff_eff <- metricsXkey.sex %>% 
+  filter(network=="affiliative") %>%
+  ggplot( aes(x=sex, y=efficiency, color=sex)) +
+   geom_violin(width=0.5, color="black")+
+  geom_boxplot(width=0.2, color="grey", alpha=0.6) +
+  geom_jitter(  width=0.05) +
+    scale_y_continuous(labels = label_number(accuracy = 0.01))+
+  theme_classic() +
+  scale_color_manual( values=alpha(c('#5D3A9B', "#E66100"),0.8)) +
+  labs(y="Efficiency", x="Sex key individual") +
+  theme(#axis.text = element_text(size=18),
+        #title = element_text(size=20),
+        legend.position = "none") 
+ 
+```
+
+```{r}
+ggpubr::ggarrange(plot_aff_count ,plot_aff_count_p , 
+                  plot_aff_dia, plot_aff_diameter,
+                 
+                  plot_aff_den,  plot_aff_density, 
+                  
+                  plot_aff_apl,plot_aff_apl_p,
+                  
+                  plot_aff_eff,plot_aff_eff_p,
+                  nrow = 5, ncol=2)
+
+
+# Add the inset plot to the main plot
+plot_aff_cou1 <- plot_aff_count +
+  annotation_custom(
+    grob = ggplotGrob(plot_aff_count_p ),
+    xmin = 1.2, xmax = 1.8,
+    ymin = 100, ymax = 150
+  )
+
+plot_aff_dia1 <- plot_aff_dia +
+  annotation_custom(
+    grob = ggplotGrob(plot_aff_diameter ),
+    xmin = 1.2, xmax = 1.8,
+    #xmin = 0.4, xmax = 0.85,
+    ymin = 0.25, ymax = 0.35
+  )
+
+plot_aff_den1 <- plot_aff_den +
+  annotation_custom(
+    grob = ggplotGrob(plot_aff_density ),
+    xmin = 1.2, xmax = 1.8,
+    #xmin = 0.4, xmax = 0.85,
+    ymin = 0.25, ymax = 0.5
+  )
+
+plot_aff_apl1 <- plot_aff_apl +
+  annotation_custom(
+    grob = ggplotGrob(plot_aff_apl_p ),
+    xmin = 1.2, xmax = 1.8,
+    #xmin = 0.4, xmax = 0.85,
+    ymin = 0.15, ymax = 0.25
+  )
+
+plot_aff_eff1 <- plot_aff_eff +
+  annotation_custom(
+    grob = ggplotGrob(plot_aff_eff_p ),
+   xmin = 1.2, xmax = 1.8,
+    #xmin = 0.4, xmax = 0.85,
+    ymin = 0.01, ymax = 0.06
+  )
+
+
+
+ggpubr::ggarrange(plot_aff_cou1 + rremove('xlab') , 
+                  plot_aff_dia1 + rremove('xlab') , 
+                  plot_aff_den1 + rremove('xlab'),
+                  plot_aff_apl1, 
+                  plot_aff_eff1
+                  )
+ggsave("figures/groupmetrics_affiliative_fall24.pdf",width=180, height = 120, units = "mm", dpi = 300)
+
+```
+
+### agonistic
+```{r agonistic results}
+sum(observed.summary$count.obs[observed.summary$network=="agonistic"]<ref.summary.ago$count.ref)/length(ref.summary.ago$count.ref)
+plot_agg_count_p <- ggplot(ref.summary.ago, aes(x=count.ref)) +
+  geom_histogram(color="grey", fill="grey") +
+  theme_classic() +
+  labs(x= "Count coefficient value", y="Frequency", title="P = 0.13") +
+  geom_vline(xintercept=observed.summary$count.obs[observed.summary$network=="agonistic"], color="red") +
+  geom_vline(xintercept = rep(quantile(ref.summary.ago$count.ref, 0.025), 2), color="darkblue", lty=2) +
+  geom_vline(xintercept = rep(quantile(ref.summary.ago$count.ref, 0.975), 2), color="darkblue", lty=2) +
+  #geom_text(x=-0.03, y=70, label="p = 0.33", size=6) +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.line.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank(),
+        title = element_text(size=6))
+        
+
+plot_agg_count <- metricsXkey.sex %>% 
+  filter(network=="agonistic") %>%
+  ggplot( aes(x=sex, y=count, color=sex)) +
+   geom_violin(width=0.5, color="black")+
+  geom_boxplot(width=0.2, color="grey", alpha=0.6) +
+  geom_jitter(  width=0.05) +
+  theme_classic() +
+  scale_color_manual( values=alpha(c('#5D3A9B', "#E66100"),0.8)) +
+  labs(y="Count", x="Sex key individual") +
+  theme(#axis.text = element_text(size=18),
+        #title = element_text(size=20),
+        legend.position = "none") 
+
+sum(observed.summary$diameter.obs[observed.summary$network=="agonistic"]<ref.summary.ago$diameter.ref)/length(ref.summary.ago$diameter.ref)
+plot_agg_diameter <- ggplot(ref.summary.ago, aes(x=diameter.ref)) +
+  geom_histogram(color="grey", fill="grey") +
+  theme_classic() +
+  labs(x= "Diameter coefficient value", y="Frequency", title="P = 0.05") +
+  geom_vline(xintercept=observed.summary$diameter.obs[observed.summary$network=="agonistic"], color="red") +
+  geom_vline(xintercept = rep(quantile(ref.summary.ago$diameter.ref, 0.025), 2), color="darkblue", lty=2) +
+  geom_vline(xintercept = rep(quantile(ref.summary.ago$diameter.ref, 0.975), 2), color="darkblue", lty=2) +
+  #geom_text(x=-0.03, y=70, label="p = 0.33", size=6) +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        axis.line.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank(),
+        title = element_text(size=6))
+        
+
+plot_agg_dia <- metricsXkey.sex %>% 
+  filter(network=="agonistic") %>%
+  ggplot( aes(x=sex, y=diameter, color=sex)) +
+   geom_violin(width=0.5, color="black")+
+  geom_boxplot(width=0.2, color="grey", alpha=0.6) +
+  geom_jitter(  width=0.05) +
+  scale_y_continuous(labels = label_number(accuracy = 0.01))+
+  theme_classic() +
+  scale_color_manual( values=alpha(c('#5D3A9B', "#E66100"),0.8)) +
+  labs(y="Diameter", x="Sex key individual") +
+  theme(#axis.text = element_text(size=18),
+        #title = element_text(size=20),
+        legend.position = "none") 
+
+
+ 
+sum(observed.summary$density.obs[observed.summary$network=="agonistic"]<ref.summary.ago$density.ref)/length(ref.summary.ago$density.ref)
+plot_agg_density <-  ggplot(ref.summary.ago, aes(x=density.ref)) +
+  geom_histogram(color="grey", fill="grey") +
+  theme_classic() +
+  labs(x= "Density coefficient value", y="Frequency", title="P = 0.68") +
+  geom_vline(xintercept=observed.summary$density.obs[observed.summary$network=="agonistic"], color="red") +
+  geom_vline(xintercept = rep(quantile(ref.summary.ago$density.ref, 0.025), 2), color="darkblue", lty=2) +
+  geom_vline(xintercept = rep(quantile(ref.summary.ago$density.ref, 0.975), 2), color="darkblue", lty=2) +
+  #geom_text(x=-2, y=125, label="p = 0.76") +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        #axis.line.x = element_blank(),
+        axis.line.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank(),
+        title = element_text(size=6))
+ 
+plot_agg_den <- metricsXkey.sex %>% 
+  filter(network=="agonistic") %>%
+  ggplot( aes(x=sex, y=density, color=sex)) +
+   geom_violin(width=0.5, color="black")+
+  geom_boxplot(width=0.2, color="grey", alpha=0.6) +
+  geom_jitter(  width=0.05) +
+  scale_y_continuous(labels = label_number(accuracy = 0.01))+
+  theme_classic() +
+  scale_color_manual( values=alpha(c('#5D3A9B', "#E66100"),0.8)) +
+  labs(y="Density", x="Sex key individual") +
+  theme(#axis.text = element_text(size=18),
+        #title = element_text(size=20),
+        legend.position = "none") 
+
+ 1- sum(observed.summary$avg_path_length.obs[observed.summary$network=="agonistic"]<ref.summary.ago$avg_path_length.ref)/length(ref.summary.ago$avg_path_length.ref)
+plot_agg_apl_p <- ggplot(ref.summary.ago, aes(x=avg_path_length.ref)) +
+  geom_histogram(color="grey", fill="grey") +
+  theme_classic() +
+  labs(x= "Average path length coefficient value", y="Frequency", title="P = 0.06") +
+  geom_vline(xintercept=observed.summary$avg_path_length.obs[observed.summary$network=="agonistic"], color="red") +
+  geom_vline(xintercept = rep(quantile(ref.summary.ago$avg_path_length.ref, 0.025), 2), color="darkblue", lty=2) +
+  geom_vline(xintercept = rep(quantile(ref.summary.ago$avg_path_length.ref, 0.975), 2), color="darkblue", lty=2) +
+  #geom_text(x=-11, y=80, label="p = 0.49") +
+    theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        #axis.line.x = element_blank(),
+        axis.line.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank(),
+        title = element_text(size=6))
+
+plot_agg_apl <- metricsXkey.sex %>% 
+  filter(network=="agonistic") %>%
+  ggplot( aes(x=sex, y=avg_path_length, color=sex)) +
+   geom_violin(width=0.5, color="black")+
+  geom_boxplot(width=0.2, color="grey", alpha=0.6) +
+  geom_jitter(  width=0.05) +
+  scale_y_continuous(labels = label_number(accuracy = 0.01))+
+  theme_classic() +
+  scale_color_manual( values=alpha(c('#5D3A9B', "#E66100"),0.8)) +
+  labs(y="Average path length", x="Sex key individual") +
+  theme(#axis.text = element_text(size=18),
+        #title = element_text(size=20),
+        legend.position = "none") 
+  
+  
+   sum(observed.summary$efficiency.obs[observed.summary$network=="agonistic"]<ref.summary.ago$efficiency.ref)/length(ref.summary.ago$efficiency.ref)
+ plot_agg_eff_p <-  ggplot(ref.summary.ago, aes(x=efficiency.ref)) +
+  geom_histogram(color="grey", fill="grey") +
+  theme_classic() +
+  labs(x= "Efficiency coefficient value", y="Frequency", title="P = 0.35") +
+  geom_vline(xintercept=observed.summary$efficiency.obs[observed.summary$network=="agonistic"], color="red") +
+  geom_vline(xintercept = rep(quantile(ref.summary.ago$efficiency.ref, 0.025), 2), color="darkblue", lty=2) +
+  geom_vline(xintercept = rep(quantile(ref.summary.ago$efficiency.ref, 0.975), 2), color="darkblue", lty=2) +
+      #geom_text(x=-0.7, y=220, label="p = 0.22") +
+     theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        #axis.line.x = element_blank(),
+        axis.line.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank(),
+        title = element_text(size=6))
+
+   plot_agg_eff <- metricsXkey.sex %>% 
+  filter(network=="agonistic") %>%
+  ggplot( aes(x=sex, y=efficiency, color=sex)) +
+   geom_violin(width=0.5, color="black")+
+  geom_boxplot(width=0.2, color="grey", alpha=0.6) +
+  geom_jitter(  width=0.05) +
+     scale_y_continuous(labels = label_number(accuracy = 0.01))+
+  theme_classic() +
+  scale_color_manual( values=alpha(c('#5D3A9B', "#E66100"),0.8)) +
+  labs(y="Efficiency", x="Sex key individual") +
+  theme(#axis.text = element_text(size=18),
+        #title = element_text(size=20),
+        legend.position = "none") 
+
+```
+
+
+
+
+```{r}
+ggpubr::ggarrange(plot_agg_count, plot_agg_count_p,
+                  plot_agg_dia, plot_agg_diameter,
+                 
+                  plot_agg_den,  plot_agg_density, 
+                  
+                  plot_agg_apl,plot_agg_apl_p,
+                  
+                  plot_agg_eff,plot_agg_eff_p,
+                  nrow = 5, ncol=2)
+
+
+
+# Add the inset plot to the main plot
+plot_agg_cou1 <- plot_agg_count +
+  annotation_custom(
+    grob = ggplotGrob(plot_agg_count_p ),
+    xmin = 1.2, xmax = 1.8,
+    ymin = 5, ymax = 7.5
+  )
+
+plot_agg_dia1 <- plot_agg_dia +
+  annotation_custom(
+    grob = ggplotGrob(plot_agg_diameter ),
+    xmin = 1.2, xmax = 1.8,
+    #xmin = 0.4, xmax = 0.99,
+    ymin = 0.15, ymax = 0.22
+  )
+
+plot_agg_den1 <- plot_agg_den +
+  annotation_custom(
+    grob = ggplotGrob(plot_agg_density ),
+    xmin = 1.2, xmax = 1.8,
+    #xmin = 0.4, xmax = 0.9,
+    ymin = 0.29, ymax = 0.49
+  )
+
+plot_agg_apl1 <- plot_agg_apl +
+  annotation_custom(
+    grob = ggplotGrob(plot_agg_apl_p ),
+    xmin = 1.2, xmax = 1.8,
+    #xmin = 0.4, xmax = 0.99,
+    ymin = 0.07, ymax = 0.1
+  )
+
+plot_agg_eff1 <- plot_agg_eff +
+  annotation_custom(
+    grob = ggplotGrob(plot_agg_eff_p ),
+    xmin = 1.2, xmax = 1.8,
+    #xmin = 0.4, xmax = 0.9,
+    ymin = 0.15, ymax = 0.23
+  )
+
+
+
+ggpubr::ggarrange(plot_agg_cou1 + rremove('xlab') , 
+                  plot_agg_dia1 + rremove('xlab') , 
+                  plot_agg_den1 + rremove('xlab'),
+                  plot_agg_apl1, 
+                  plot_agg_eff1
+                  )
+ggsave("figures/groupmetrics_agonistic_fall24.pdf",width=180, height = 120, units = "mm", dpi = 300)
+
+
+```
+
+
+###multilayer
+
+```{r}
+
+multilayer.obs <- observed.summary %>% 
+  filter(network=="multilayer")
+
+# density
+ 
+sum(multilayer.obs$density.obs<ref.summary.multi$density.ref)/length(ref.summary.multi$density.ref)
+
+plot_multi_density <-  ggplot(ref.summary.multi, aes(x=density.ref)) +
+  geom_histogram(color="grey", fill="grey") +
+  theme_classic() +
+  labs(x= "Density coefficient value", y="Frequency", title="P = 0.61") +
+  geom_vline(xintercept=multilayer.obs$density.obs, color="red") +
+  geom_vline(xintercept = rep(quantile(ref.summary.multi$density.ref, 0.025), 2), color="darkblue", lty=2) +
+  geom_vline(xintercept = rep(quantile(ref.summary.multi$density.ref, 0.975), 2), color="darkblue", lty=2) +
+  #geom_text(x=-2, y=125, label="p = 0.76") +
+  theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        #axis.line.x = element_blank(),
+        axis.line.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank(),
+        title = element_text(size=6))
+ 
+plot_multi_den <- multiXkey %>% 
+  #filter(network=="agonistic") %>%
+  ggplot( aes(x=sex, y=density, color=sex)) +
+   geom_violin(width=0.5, color="black")+
+  geom_boxplot(width=0.2, color="grey", alpha=0.6) +
+  geom_jitter(  width=0.05) +
+  scale_y_continuous(labels = label_number(accuracy = 0.01))+
+  theme_classic() +
+  scale_color_manual( values=alpha(c('#5D3A9B', "#E66100"),0.8)) +
+  labs(y="Density", x="Sex key individual") +
+  theme(#axis.text = element_text(size=18),
+        #title = element_text(size=20),
+        legend.position = "none") 
+
+
+# average path length
+  sum(multilayer.obs$avg_path_length.obs<ref.summary.multi$avg_path_length.ref)/length(ref.summary.multi$avg_path_length.ref)
+
+  plot_multi_apl_p <- ggplot(ref.summary.multi, aes(x=avg_path_length.ref)) +
+  geom_histogram(color="grey", fill="grey") +
+  theme_classic() +
+  labs(x= "Average path length coefficient value", y="Frequency", title="P = 0.73") +
+  geom_vline(xintercept=multilayer.obs$avg_path_length.obs, color="red") +
+  geom_vline(xintercept = rep(quantile(ref.summary.multi$avg_path_length.ref, 0.025), 2), color="darkblue", lty=2) +
+  geom_vline(xintercept = rep(quantile(ref.summary.multi$avg_path_length.ref, 0.975), 2), color="darkblue", lty=2) +
+  #geom_text(x=-11, y=80, label="p = 0.49") +
+    theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        #axis.line.x = element_blank(),
+        axis.line.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank(),
+        title = element_text(size=6))
+
+plot_multi_apl <- multiXkey %>% 
+  ggplot( aes(x=sex, y=m.apl, color=sex)) +
+   geom_violin(width=0.5, color="black")+
+  geom_boxplot(width=0.2, color="grey", alpha=0.6) +
+  geom_jitter(  width=0.05) +
+  scale_y_continuous(labels = label_number(accuracy = 0.01))+
+  theme_classic() +
+  scale_color_manual( values=alpha(c('#5D3A9B', "#E66100"),0.8)) +
+  labs(y="Average path length", x="Sex key individual") +
+  theme(#axis.text = element_text(size=18),
+        #title = element_text(size=20),
+        legend.position = "none") 
+
+# cluster
+sum(multilayer.obs$cluster.obs<ref.summary.multi$cluster.ref)/length(ref.summary.multi$cluster.ref)
+ plot_multi_clus_p <-  ggplot(ref.summary.multi, aes(x=cluster.ref)) +
+  geom_histogram(color="grey", fill="grey") +
+  theme_classic() +
+  labs(x= "Cluster coefficient value", y="Frequency", title="P = 0.64") +
+  geom_vline(xintercept=multilayer.obs$cluster.obs, color="red") +
+  geom_vline(xintercept = rep(quantile(ref.summary.multi$cluster.ref, 0.025), 2), color="darkblue", lty=2) +
+  geom_vline(xintercept = rep(quantile(ref.summary.multi$cluster.ref, 0.975), 2), color="darkblue", lty=2) +
+      #geom_text(x=-0.7, y=220, label="p = 0.22") +
+     theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        #axis.line.x = element_blank(),
+        axis.line.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank(),
+        title = element_text(size=6))
+
+plot_multi_clus <- multiXkey %>% 
+  #filter(network=="agonistic") %>%
+  ggplot( aes(x=sex, y=cluster, color=sex)) +
+   geom_violin(width=0.5, color="black")+
+  geom_boxplot(width=0.2, color="grey", alpha=0.6) +
+  geom_jitter(  width=0.05) +
+  scale_y_continuous(labels = label_number(accuracy = 0.01))+
+  theme_classic() +
+  scale_color_manual( values=alpha(c('#5D3A9B', "#E66100"),0.8)) +
+  labs(y="Cluster", x="Sex key individual") +
+  theme(#axis.text = element_text(size=18),
+        #title = element_text(size=20),
+        legend.position = "none") 
+   
+   
+   # overlap
+ sum(multilayer.obs$overlap.obs<ref.summary.multi$overlap.ref)/length(ref.summary.multi$overlap.ref)
+ plot_multi_ove_p <-  ggplot(ref.summary.multi, aes(x=overlap.ref)) +
+  geom_histogram(color="grey", fill="grey") +
+  theme_classic() +
+  labs(x= "Overlap coefficient value", y="Frequency", title="P = 0.68") +
+  geom_vline(xintercept=multilayer.obs$overlap.obs, color="red") +
+  geom_vline(xintercept = rep(quantile(ref.summary.multi$overlap.ref, 0.025), 2), color="darkblue", lty=2) +
+  geom_vline(xintercept = rep(quantile(ref.summary.multi$overlap.ref, 0.975), 2), color="darkblue", lty=2) +
+      #geom_text(x=-0.7, y=220, label="p = 0.22") +
+     theme(axis.title.x = element_blank(),
+        axis.title.y = element_blank(),
+        axis.text.x = element_blank(),
+        axis.text.y = element_blank(),
+        #axis.line.x = element_blank(),
+        axis.line.y = element_blank(),
+        axis.ticks.x = element_blank(),
+        axis.ticks.y = element_blank(),
+        title = element_text(size=6))
+
+plot_multi_ove <- multiXkey %>% 
+  #filter(network=="agonistic") %>%
+  ggplot( aes(x=sex, y=overlap, color=sex)) +
+   geom_violin(width=0.5, color="black")+
+  geom_boxplot(width=0.2, color="grey", alpha=0.6) +
+  geom_jitter(  width=0.05) +
+  scale_y_continuous(labels = label_number(accuracy = 0.01))+
+  theme_classic() +
+  scale_color_manual( values=alpha(c('#5D3A9B', "#E66100"),0.8)) +
+  labs(y="Overlap", x="Sex key individual") +
+  theme(#axis.text = element_text(size=18),
+        #title = element_text(size=20),
+        legend.position = "none")   
+```
+```{r}
+ggpubr::ggarrange(plot_multi_den,  plot_multi_density, 
+                  
+                  plot_multi_apl,plot_multi_apl_p,
+                  
+                  plot_multi_clus,plot_multi_clus_p,
+                  plot_multi_ove,plot_multi_ove_p,
+                  nrow = 5, ncol=2)
+```
+
+
+
+### combined all
+
+```{r only monolayers}
+plot_networkmetricsXsex <- ggpubr::ggarrange(plot_prox_count + rremove('xlab'), 
+                  plot_aff_count + rremove('xlab')+ rremove('ylab'), 
+                  plot_agg_count + rremove('xlab') + rremove('ylab'), 
+  
+                  plot_prox_dia + rremove('xlab'), 
+                  plot_aff_dia + rremove('xlab')+ rremove('ylab'), 
+                  plot_agg_dia + rremove('xlab') + rremove('ylab'), 
+                  
+                  plot_prox_den + rremove('xlab'), 
+                  plot_aff_den + rremove('xlab')+ rremove('ylab'), 
+                  plot_agg_den + rremove('xlab')+ rremove('ylab'),
+                  
+                  plot_prox_apl + rremove('xlab'), 
+                  plot_aff_apl + rremove('xlab')+ rremove('ylab'), 
+                  plot_agg_apl + rremove('xlab')+ rremove('ylab'),
+                  
+                  plot_prox_eff, 
+                  plot_aff_eff+ rremove('ylab'), 
+                  plot_agg_eff+ rremove('ylab'),
+                  
+                  nrow=5, ncol=3)
+
+plot_networkmetricsXsex
+ggsave("../figures/thkeyXgroupXmetrics_fall24.pdf",width=180, height = 210, units = "mm", dpi = 300)                  
+```
+
+
+```{r all}
+plot_networkmetricsXsex_all <- ggpubr::ggarrange(plot_prox_count + rremove('xlab'), 
+                  plot_aff_count + rremove('xlab')+ rremove('ylab'), 
+                  plot_agg_count + rremove('xlab') + rremove('ylab'), 
+                  plot_agg_count + rremove('xlab') + rremove('ylab'), # I will have to remove this later
+  
+                  plot_prox_dia + rremove('xlab'), 
+                  plot_aff_dia + rremove('xlab')+ rremove('ylab'), 
+                  plot_agg_dia + rremove('xlab') + rremove('ylab'), 
+                  plot_multi_clus + rremove('xlab')+ rremove('ylab'),  # cluster instead of diameter
+                  
+                  plot_prox_den + rremove('xlab'), 
+                  plot_aff_den + rremove('xlab')+ rremove('ylab'), 
+                  plot_agg_den + rremove('xlab')+ rremove('ylab'),
+                  plot_multi_den + rremove('xlab')+ rremove('ylab'),  # density is denisty
+                  
+                  plot_prox_apl + rremove('xlab'), 
+                  plot_aff_apl + rremove('xlab')+ rremove('ylab'), 
+                  plot_agg_apl + rremove('xlab')+ rremove('ylab'),
+                  plot_multi_apl + rremove('xlab')+ rremove('ylab'),  # apl = apl
+                  
+                  plot_prox_eff, 
+                  plot_aff_eff+ rremove('ylab'), 
+                  plot_agg_eff+ rremove('ylab'),
+                  plot_multi_ove + rremove('ylab'),  # overlap instead of efficiency
+                  
+                  nrow=5, ncol=4, align="hv")
+
+plot_networkmetricsXsex_all
+ggsave("../figures/sexXgroupXmetrics_all2.pdf",width=180, height = 210, units = "mm", dpi = 300)                  
+```
+
+
+
+
+# Does group characteristics predict presence of key degus?
+
+```{r}
+load("../results/key_roleXgroup_fall2024.Rdata")
+```
+
+```{r}
+keysex24 <- degulist24 %>% 
+  filter(rank<16) %>% 
+  select(sex, group) %>% 
+  rename(sex.keyID=sex)
+```
+
+
+```{r}
+groupchars24 <- degulist24 %>% 
+  group_by(group, sex) %>% 
+  tally() %>% 
+  pivot_wider(#ids_col = group,
+              names_from = sex,
+              values_from = n,
+              values_fill = 0) %>% 
+  mutate(sexratio = M/(F+M),
+         groupsize=sum(F+M), 
+         groups.with.key=if_else(group %in% groups.with.thkey, "yes", "no"),
+         key_num=if_else(groups.with.key=="yes", 1, 0)) %>% 
+  filter(group!="NA") %>% 
+  left_join(keysex24, by="group") %>% 
+  mutate(M_key=if_else(sex.keyID=="M", "yes", "no"), 
+         F_key=if_else(sex.keyID!="M", "yes", "no"))
+
+groupchars24$M_key[is.na(groupchars24$M_key)] <- "no"
+groupchars24$F_key[is.na(groupchars24$F_key)] <- "no"
+
+
+
+```
+
